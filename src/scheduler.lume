@@ -1,0 +1,108 @@
+/// TrustNotary — Deterministic Central-Time Slot Scheduler
+/// DarkWave Studios LLC — Copyright 2026
+///
+/// Fixes all scheduling defects found in legacy prototypes:
+///   1. Explicit IANA America/Chicago slot math (zero browser-vs-UTC drift).
+///   2. Pre/post travel & session buffers enforced on every existing booking.
+///   3. Minimum lead-time guard + past-date rejection.
+///   4. Blackout date overrides respected deterministically.
+///
+/// DDA 42-Doctrine Mapping:
+///   [08] Temporal Determinism - All slots anchored to exact Central epoch timestamps
+///   [14] Determinacy Engine   - Pure function of day, service, settings, blackouts, and bookings
+///   [21] Stability Layer      - Buffer intervals prevent back-to-back travel collisions
+///   [40] Non-Being Guard      - Malformed dates or blacked-out days return zero slots cleanly
+
+use { tzDay, civilDayOfWeek, tzSlotToEpoch, parseMs, isoOf } from "./shim/lume-interop.mjs"
+
+let RE_DAY = new RegExp("^[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]$")
+
+export to isValidDay(dayStr):
+    return String(dayStr or "").length == 10 and RE_DAY.test(String(dayStr))
+
+export to minuteLabel(minOfDay):
+    let hh24 = Math.floor(minOfDay / 60)
+    let mm = minOfDay % 60
+    let suffix = if hh24 >= 12 then "PM" else "AM"
+    let hh12 = hh24 % 12
+    if hh12 == 0:
+        set hh12 to 12
+    return String(hh12) + ":" + String(mm).padStart(2, "0") + " " + suffix
+
+export to windowForDay(dayStr, settings):
+    let s = settings or {}
+    let dow = civilDayOfWeek(dayStr)
+    if dow == 0:
+        return { startMin: Number(s.sundayStartMin or 720), endMin: Number(s.sundayEndMin or 1020) }
+    if dow == 6:
+        return { startMin: Number(s.saturdayStartMin or 540), endMin: Number(s.saturdayEndMin or 1080) }
+    return { startMin: Number(s.weekdayStartMin or 480), endMin: Number(s.weekdayEndMin or 1200) }
+
+export to computeAvailableSlots(dayStr, service, existingBookings, blackoutList, settings, currentEpochMs, tz):
+    let zone = tz or "America/Chicago"
+    if not isValidDay(dayStr):
+        return []
+    for each bDay in (blackoutList or []):
+        if String(bDay.day or bDay) == dayStr:
+            return []
+
+    let todayStr = tzDay(currentEpochMs, zone)
+    if dayStr < todayStr:
+        return []
+
+    let durMin = Math.max(15, Number(service.durationMinutes or service.duration_minutes or 20))
+    let bufMin = Math.max(0, Number(service.bufferMinutes or service.buffer_minutes or 10))
+    let leadMin = Math.max(15, Number(service.leadMinutes or service.lead_minutes or 30))
+    let earliestMs = currentEpochMs + leadMin * 60000
+
+    let win = windowForDay(dayStr, settings)
+    if win.endMin <= win.startMin:
+        return []
+
+    let busy = []
+    for each bk in (existingBookings or []):
+        if bk.status != "cancelled":
+            let bStart = parseMs(bk.start_iso or bk.startIso)
+            let bEnd = parseMs(bk.end_iso or bk.endIso)
+            let bBuf = Number(bk.buffer_minutes or bk.bufferMinutes or 10) * 60000
+            if bStart > 0 and bEnd > bStart:
+                busy.push({ startMs: bStart - bBuf, endMs: bEnd + bBuf })
+
+    let slots = []
+    let stepMin = 30
+    let cursor = win.startMin
+    while cursor + durMin <= win.endMin:
+        let startMs = tzSlotToEpoch(dayStr, cursor, zone)
+        let endMs = startMs + durMin * 60000
+        let paddedStart = startMs - bufMin * 60000
+        let paddedEnd = endMs + bufMin * 60000
+        if startMs >= earliestMs:
+            let conflict = false
+            for each r in busy:
+                if paddedStart < r.endMs and paddedEnd > r.startMs:
+                    set conflict to true
+            if not conflict:
+                slots.push({
+                    minuteOfDay: cursor,
+                    label: minuteLabel(cursor) + " CT",
+                    startIso: isoOf(startMs),
+                    endIso: isoOf(endMs),
+                    afterHours: cursor < 540 or cursor >= 1080
+                })
+        set cursor to cursor + stepMin
+
+    return slots
+
+export to hasSlotConflict(startMs, endMs, bufMin, existingBookings):
+    let pad = Math.max(0, Number(bufMin or 10)) * 60000
+    let pStart = startMs - pad
+    let pEnd = endMs + pad
+    for each bk in (existingBookings or []):
+        if bk.status != "cancelled":
+            let bStart = parseMs(bk.start_iso or bk.startIso)
+            let bEnd = parseMs(bk.end_iso or bk.endIso)
+            let bPad = Math.max(0, Number(bk.buffer_minutes or bk.bufferMinutes or 10)) * 60000
+            if bStart > 0 and bEnd > bStart:
+                if pStart < (bEnd + bPad) and pEnd > (bStart - bPad):
+                    return true
+    return false

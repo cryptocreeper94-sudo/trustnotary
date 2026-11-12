@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Signer Vault · TrustNotary Tennessee Online &amp; Mobile Notary</title>
+  <meta name="description" content="Private Signer Vault for uploading unsigned PDFs with SHA-256 tamper-evident hashing, reviewing upfront fee quotes, and joining your Tennessee Online Notary video room." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&amp;family=Playfair+Display:ital,wght@0,600;0,700;1,600&amp;family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body data-page="portal">
+  <header class="tn-nav">
+    <div class="tn-nav-inner">
+      <div class="tn-nav-left">
+        <button type="button" class="tn-back-btn" id="btn-global-back" title="Go Back">&#8592; Back</button>
+        <a href="/" class="tn-brand">
+          <span class="tn-brand-seal">TN</span>
+          <span class="tn-brand-text">
+            <span id="nav-brand-name">TrustNotary</span>
+            <small>Signer Document Vault</small>
+          </span>
+        </a>
+      </div>
+      <nav class="tn-nav-links">
+        <a href="/">Home</a>
+        <a href="/b2b">Law &amp; B2B</a>
+        <a href="/portal" class="active">Signer Vault</a>
+        <a href="/#services" class="tn-btn tn-btn-gold tn-btn-sm">New Booking</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="tn-hero" style="padding:48px 0 40px">
+      <div class="tn-container">
+        <div class="tn-eyebrow">&#128274; SHA-256 Encrypted Document Intake</div>
+        <h1 class="tn-h1" style="font-size:clamp(1.9rem,3.6vw,2.75rem)">Private <em>Signer Vault</em></h1>
+        <p class="tn-lead" style="margin-bottom:0">
+          Enter your Booking Reference (e.g. <code>TN-8F4K2A</code>) or email address along with your 6-digit Vault PIN to upload your unsigned PDF ahead of your session and join your webcam room.
+        </p>
+      </div>
+    </section>
+
+    <section class="tn-section" style="padding-top:36px">
+      <div class="tn-container">
+        <!-- Vault Login Panel -->
+        <div class="tn-panel" id="portal-login-card" style="max-width:560px;margin:0 auto 32px;border-color:var(--border-gold)">
+          <span class="tn-card-badge">Step 1 · Authenticate Appointment</span>
+          <h3 style="margin:0 0 8px;font-family:var(--font-serif);font-size:1.35rem">Unlock Your Signer Vault</h3>
+          <p style="font-size:13.5px;color:var(--text-muted);margin:0 0 16px">Your 6-digit Vault PIN was displayed on your booking confirmation screen and sent to your email.</p>
+
+          <div class="tn-field">
+            <label for="pv-id">Booking Reference, Email, or Mobile Phone</label>
+            <input id="pv-id" type="text" placeholder="TN-XXXXXX or you@example.com" class="tn-input" />
+          </div>
+          <div class="tn-field">
+            <label for="pv-pin">6-Digit Signer Vault PIN</label>
+            <input id="pv-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••••" class="tn-input" />
+          </div>
+          <div id="pv-error" style="color:#f87171;font-size:13px;margin-bottom:10px;display:none"></div>
+          <button type="button" class="tn-btn tn-btn-gold" style="width:100%" id="btn-pv-unlock">Unlock Signer Vault &#8594;</button>
+        </div>
+
+        <!-- Unlocked Vault Workspace -->
+        <div id="portal-content" style="display:none">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:18px">
+            <div>
+              <span class="tn-badge-ok" id="pv-status-badge">CONFIRMED</span>
+              <h2 class="tn-h2" id="pv-heading" style="margin-top:8px;margin-bottom:2px">Appointment Details</h2>
+              <p class="tn-sub" id="pv-subheading" style="font-size:13.5px"></p>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <a id="pv-ron-btn" href="#" target="_blank" rel="noopener" class="tn-btn tn-btn-gold" style="display:none">Join Live Webcam Session &#8599;</a>
+              <button type="button" class="tn-btn tn-btn-outline tn-btn-sm" id="btn-pv-lock">Lock Vault</button>
+            </div>
+          </div>
+
+          <div class="tn-row-2" style="align-items:start">
+            <div class="tn-panel">
+              <span class="tn-card-badge">Unsigned Document Intake</span>
+              <h3 style="margin:0 0 8px;font-family:var(--font-serif)">Upload PDF Prior to Signing</h3>
+              <p style="font-size:13.5px;color:var(--text-muted);margin:0 0 14px">
+                Upload your <strong>unsigned</strong> document (PDF or clear scan under 10 MB). Do not sign until instructed live by the Tennessee Notary Public.
+              </p>
+              <div class="tn-field">
+                <label for="pv-file">Select Unsigned PDF or Image</label>
+                <input id="pv-file" type="file" accept=".pdf,application/pdf,image/png,image/jpeg" class="tn-input" />
+              </div>
+              <div id="pv-upload-msg" style="font-size:13px;margin-bottom:10px;display:none"></div>
+              <button type="button" class="tn-btn tn-btn-gold tn-btn-sm" id="btn-pv-upload">Upload &amp; Compute SHA-256 Fingerprint</button>
+
+              <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border-dark)">
+                <h4 style="margin:0 0 10px;font-size:12.5px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted)">Vault Files on Record</h4>
+                <div id="pv-doc-list" style="font-size:13px;color:var(--text-muted)">No documents uploaded yet.</div>
+              </div>
+            </div>
+
+            <div class="tn-panel">
+              <span class="tn-card-badge">Upfront Statutory Fee Disclosure</span>
+              <h3 style="margin:0 0 8px;font-family:var(--font-serif)">Itemized Appointment Receipt</h3>
+              <div class="tn-quote-box" id="pv-quote-box"></div>
+              <p style="font-size:12.5px;color:var(--text-muted);margin:10px 0 0" id="pv-statute-note"></p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Signer Readiness Checklist Carousel (Cream Section Standard) -->
+        <div style="margin-top:40px">
+          <div class="tn-section-head">
+            <div>
+              <div class="tn-eyebrow">Session Prep</div>
+              <h2 class="tn-h2">3-Minute Signer Readiness Checklist</h2>
+            </div>
+          </div>
+          <div class="tn-carousel-wrap" data-carousel="portal-prep">
+            <div class="tn-carousel-track">
+              <article class="tn-card">
+                <div>
+                  <span class="tn-card-badge">01 · Valid Photo ID</span>
+                  <h3>Unexpired Government ID</h3>
+                  <p>Have your unexpired US driver's license, state ID, or passport within arm's reach for credential analysis or in-person inspection.</p>
+                </div>
+              </article>
+              <article class="tn-card">
+                <div>
+                  <span class="tn-card-badge">02 · Wait to Sign</span>
+                  <h3>Leave Signature Lines Blank</h3>
+                  <p>For acknowledgments and jurats/oaths, Tennessee law requires witnessing or acknowledging execution with the notary present.</p>
+                </div>
+              </article>
+              <article class="tn-card">
+                <div>
+                  <span class="tn-card-badge">03 · Audio &amp; Camera</span>
+                  <h3>Quiet Lit Room for Webcam</h3>
+                  <p>Online notarization sessions are audio-video recorded per T.C.A. § 8-16-301 and retained securely for the statutory period.</p>
+                </div>
+              </article>
+            </div>
+            <div class="tn-carousel-controls">
+              <button type="button" class="tn-car-arrow" data-dir="-1" aria-label="Previous tip">&#8249;</button>
+              <div class="tn-car-dots"></div>
+              <button type="button" class="tn-car-arrow" data-dir="1" aria-label="Next tip">&#8250;</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="tn-footer">
+    <div class="tn-container tn-footer-inner">
+      <div>
+        <strong style="color:#f8fafc">TrustNotary</strong> · Signer Document Vault (SHA-256 Fingerprinted)<br />
+        <span style="font-size:12px">A Tennessee Notary Public is not an attorney licensed to practice law and may not give legal advice.</span>
+      </div>
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+        <a href="/">&#8592; Back to Home</a>
+        <a href="/b2b">Law &amp; B2B</a>
+        <a href="mailto:team@dwsc.io">team@dwsc.io</a>
+      </div>
+    </div>
+  </footer>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

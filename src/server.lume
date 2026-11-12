@@ -1,0 +1,429 @@
+/// TrustNotary — HTTP Server, Public Booking API, Signer Vault & Admin Cockpit
+/// DarkWave Studios LLC — Copyright 2026
+///
+/// DDA 42-Doctrine Mapping:
+///   [02] Boundary Engine   - Input size limits, file extension allowlist, HttpOnly HMAC cookies
+///   [29] Integration Layer - Unifies scheduler, quote engine, SQLite store, seal SVG, and Resend/Stripe
+///   [35] Safety Envelope   - Structured JSON errors, zero stack-trace leakage
+
+use { createServer } from "node:http"
+use { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
+use { join, dirname, extname } from "node:path"
+use { fileURLToPath } from "node:url"
+use { readReqBody, parseQuery, sendHttp, tryJson, hmacHex, safeEq, nowMs, sha256Hex, fromBase64, put, getProp } from "./shim/lume-interop.mjs"
+use { createStore } from "./store.lume"
+use { computeQuote, lookupZipZone } from "./pricing.lume"
+use { computeAvailableSlots, isValidDay } from "./scheduler.lume"
+use { buildSealSvg } from "./seal.lume"
+use { notifyBookingCreated, createStripeCheckoutForBooking, resendConfigured, stripeConfigured } from "./notifications.lume"
+
+let HERE = dirname(fileURLToPath(import.meta.url))
+let ROOT_DIR = join(HERE, "..")
+let PUBLIC_DIR = join(ROOT_DIR, "public")
+let DATA_DIR = String(process.env.DATA_DIR or join(ROOT_DIR, "data"))
+let UPLOAD_DIR = join(DATA_DIR, "uploads")
+let PORT = Number(process.env.PORT or 3000)
+let APP_TZ = String(process.env.APP_TZ or "America/Chicago")
+let SESSION_SECRET = String(process.env.SESSION_SECRET or "trustnotary-dwsc-hmac-2026")
+let ADMIN_PIN = String(process.env.ADMIN_PIN or "0424")
+
+mkdirSync(UPLOAD_DIR, { recursive: true })
+let store = createStore(join(DATA_DIR, "trustnotary.db"), SESSION_SECRET)
+
+let MIME_MAP = {
+    html: "text/html; charset=utf-8",
+    css: "text/css; charset=utf-8",
+    js: "application/javascript; charset=utf-8",
+    mjs: "application/javascript; charset=utf-8",
+    svg: "image/svg+xml",
+    png: "image/png",
+    ico: "image/x-icon",
+    json: "application/json; charset=utf-8",
+    webmanifest: "application/manifest+json"
+}
+
+to jsonReply(res, code, obj):
+    let headers = {}
+    put(headers, "Content-Type", "application/json; charset=utf-8")
+    put(headers, "Cache-Control", "no-store")
+    return sendHttp(res, code, headers, JSON.stringify(obj))
+
+to parseCookieMap(req):
+    let raw = String(getProp(req.headers, "cookie", ""))
+    let out = {}
+    for each part in raw.split(";"):
+        let trimmed = part.trim()
+        let eqIdx = trimmed.indexOf("=")
+        if eqIdx > 0:
+            let k = trimmed.slice(0, eqIdx).trim()
+            let v = decodeURIComponent(trimmed.slice(eqIdx + 1).trim())
+            put(out, k, v)
+    return out
+
+to makeAdminToken():
+    let exp = nowMs() + 12 * 3600000
+    return String(exp) + "." + hmacHex(SESSION_SECRET, "tn-admin", String(exp))
+
+to isAdminReq(req):
+    let cookies = parseCookieMap(req)
+    let tok = String(getProp(cookies, "tn_admin", ""))
+    let dot = tok.indexOf(".")
+    if dot < 1:
+        return false
+    let expStr = tok.slice(0, dot)
+    let sig = tok.slice(dot + 1)
+    if Number(expStr) <= nowMs():
+        return false
+    return safeEq(sig, hmacHex(SESSION_SECRET, "tn-admin", expStr))
+
+to siteOriginOf(req):
+    if process.env.SITE_URL:
+        return String(process.env.SITE_URL).replace(new RegExp("/+$"), "")
+    let proto = String(getProp(req.headers, "x-forwarded-proto", "http")).split(",")[0].trim()
+    let host = String(getProp(req.headers, "host", "localhost:" + String(PORT)))
+    return proto + "://" + host
+
+to safeFilename(raw):
+    let cleaned = String(raw or "document.pdf").replace(new RegExp("[^a-zA-Z0-9._-]", "g"), "_")
+    if cleaned.length > 80:
+        return cleaned.slice(cleaned.length - 80)
+    return cleaned
+
+to serveStaticPage(res, filename):
+    let full = join(PUBLIC_DIR, filename)
+    if not existsSync(full):
+        return jsonReply(res, 404, { error: "Page not found" })
+    let ext = extname(filename).replace(".", "").toLowerCase()
+    let mime = getProp(MIME_MAP, ext, "application/octet-stream")
+    let headers = {}
+    put(headers, "Content-Type", mime)
+    put(headers, "Cache-Control", (if ext == "html" then "no-cache" else "public, max-age=300"))
+    return sendHttp(res, 200, headers, readFileSync(full))
+
+export to handleRequest(req, res):
+    let parsed = parseQuery(req.url)
+    let path = parsed.pathname
+    let query = parsed.query
+    let method = String(req.method or "GET").toUpperCase()
+
+    // 1. Health check for Coolify container orchestration
+    if path == "/api/health" and method == "GET":
+        let chain = store.verifyJournalChain()
+        return jsonReply(res, 200, {
+            ok: true,
+            service: "trustnotary",
+            tz: APP_TZ,
+            journalIntact: chain.intact,
+            journalEntries: chain.count,
+            emailConfigured: resendConfigured(),
+            stripeConfigured: stripeConfigured()
+        })
+
+    // 2. Public configuration & active service catalog
+    if path == "/api/public/config" and method == "GET":
+        return jsonReply(res, 200, {
+            settings: store.getSettings(),
+            services: store.listServices(true),
+            stripeEnabled: stripeConfigured(),
+            emailEnabled: resendConfigured(),
+            tz: APP_TZ
+        })
+
+    // 3. Deterministic Quote Calculator (RON + Middle TN ZIP travel)
+    if path == "/api/quote" and method == "POST":
+        let raw = await readReqBody(req, 32768)
+        let body = tryJson(raw, {}) or {}
+        let svc = store.getServiceBySlug(body.serviceSlug)
+        if svc == null:
+            return jsonReply(res, 404, { error: "Service not found" })
+        let quote = computeQuote(svc, {
+            sealCount: body.sealCount,
+            zip: body.zip,
+            afterHours: body.afterHours
+        })
+        return jsonReply(res, 200, { ok: true, quote: quote, zipZone: lookupZipZone(body.zip) })
+
+    // 4. Central-Time Availability Slots
+    if path == "/api/availability" and method == "GET":
+        let dayStr = String(getProp(query, "day", ""))
+        let slug = String(getProp(query, "service", ""))
+        if not isValidDay(dayStr):
+            return jsonReply(res, 400, { error: "Provide day=YYYY-MM-DD" })
+        let svc = store.getServiceBySlug(slug)
+        if svc == null:
+            return jsonReply(res, 404, { error: "Service not found" })
+        let slots = computeAvailableSlots(
+            dayStr,
+            svc,
+            store.bookingsForDay(dayStr),
+            store.listBlackouts(),
+            store.getSettings(),
+            nowMs(),
+            APP_TZ
+        )
+        return jsonReply(res, 200, { ok: true, day: dayStr, service: slug, slots: slots })
+
+    // 5. Atomic Booking Creation + Signer Vault PIN + Email/Stripe
+    if path == "/api/bookings" and method == "POST":
+        let raw = await readReqBody(req, 65536)
+        let body = tryJson(raw, {}) or {}
+        let svc = store.getServiceBySlug(body.serviceSlug)
+        if svc == null or Number(svc.active) != 1:
+            return jsonReply(res, 400, { error: "Selected service is unavailable" })
+        let clientName = String(body.clientName or "").trim()
+        let clientEmail = String(body.clientEmail or "").trim()
+        let clientPhone = String(body.clientPhone or "").trim()
+        if clientName == "" or clientEmail == "" or clientPhone == "":
+            return jsonReply(res, 400, { error: "Name, email, and phone are required" })
+        if not Boolean(body.feeAgreed):
+            return jsonReply(res, 400, { error: "Please confirm the upfront itemized fee quote" })
+        if svc.modality == "mobile" and String(body.address or "").trim().length < 5:
+            return jsonReply(res, 400, { error: "Street or facility address is required for Mobile Notary dispatch" })
+        if not isValidDay(body.day):
+            return jsonReply(res, 400, { error: "Valid appointment date required" })
+
+        let avail = computeAvailableSlots(
+            body.day,
+            svc,
+            store.bookingsForDay(body.day),
+            store.listBlackouts(),
+            store.getSettings(),
+            nowMs(),
+            APP_TZ
+        )
+        let matchedSlot = null
+        for each sl in avail:
+            if sl.startIso == body.startIso:
+                set matchedSlot to sl
+        if matchedSlot == null:
+            return jsonReply(res, 409, { error: "That time slot is no longer available. Please choose another slot." })
+
+        let quote = computeQuote(svc, {
+            sealCount: body.sealCount,
+            zip: body.zip,
+            afterHours: Boolean(body.afterHours) or matchedSlot.afterHours
+        })
+
+        let created = store.createBookingAtomic({
+            serviceSlug: svc.slug,
+            serviceName: svc.name,
+            modality: svc.modality,
+            day: body.day,
+            startIso: matchedSlot.startIso,
+            endIso: matchedSlot.endIso,
+            bufferMinutes: svc.buffer_minutes,
+            sealCount: quote.sealCount,
+            afterHours: quote.afterHours,
+            zip: String(body.zip or ""),
+            address: String(body.address or ""),
+            docTitle: String(body.docTitle or ""),
+            notes: String(body.notes or ""),
+            clientName: clientName,
+            clientEmail: clientEmail,
+            clientPhone: clientPhone,
+            totalCents: quote.totalCents,
+            quote: quote,
+            status: "confirmed",
+            paymentStatus: "pay_at_session"
+        })
+        if not created.ok:
+            return jsonReply(res, (if created.conflict then 409 else 500), { error: created.error })
+
+        let origin = siteOriginOf(req)
+        let checkout = null
+        if Boolean(body.payNow) and stripeConfigured():
+            set checkout to await createStripeCheckoutForBooking(created.booking, origin)
+            if checkout != null:
+                store.setStripeSession(created.booking.id, checkout.id)
+
+        await notifyBookingCreated(created.booking, quote, created.vaultPin, store.getSettings(), origin)
+
+        return jsonReply(res, 201, {
+            ok: true,
+            booking: {
+                refCode: created.booking.ref_code,
+                serviceName: created.booking.service_name,
+                modality: created.booking.modality,
+                day: created.booking.day,
+                startIso: created.booking.start_iso,
+                endIso: created.booking.end_iso,
+                totalCents: created.booking.total_cents,
+                totalDisplay: quote.totalDisplay,
+                ronUrl: created.booking.ron_url
+            },
+            vaultPin: created.vaultPin,
+            quote: quote,
+            checkoutUrl: (if checkout then checkout.url else null)
+        })
+
+    // 6. B2B Law Firm / Contractor / Title Overflow Intake
+    if path == "/api/b2b" and method == "POST":
+        let raw = await readReqBody(req, 32768)
+        let body = tryJson(raw, {}) or {}
+        if String(body.company or "").trim() == "" or String(body.email or "").trim() == "":
+            return jsonReply(res, 400, { error: "Company name and email are required" })
+        let saved = store.addB2bLead(body)
+        return jsonReply(res, 201, { ok: true, lead: saved })
+
+    // 7. Signer Vault Portal Lookup & Unsigned PDF Upload
+    if path == "/api/portal/lookup" and method == "POST":
+        let raw = await readReqBody(req, 16384)
+        let body = tryJson(raw, {}) or {}
+        let found = store.verifyPortalAccess(body.identifier, body.pin)
+        if found == null:
+            return jsonReply(res, 401, { error: "Invalid Reference/Email or 6-Digit Vault PIN" })
+        return jsonReply(res, 200, { ok: true, booking: found.booking, quote: found.quote, documents: found.documents })
+
+    if path == "/api/portal/upload" and method == "POST":
+        let raw = await readReqBody(req, 14 * 1024 * 1024)
+        let body = tryJson(raw, {}) or {}
+        let found = store.verifyPortalAccess(body.identifier, body.pin)
+        if found == null:
+            return jsonReply(res, 401, { error: "Invalid Vault credentials" })
+        let b64 = String(body.base64Data or "")
+        if b64 == "":
+            return jsonReply(res, 400, { error: "Missing document payload" })
+        let buf = fromBase64(b64)
+        if buf.length == 0 or buf.length > 10 * 1024 * 1024:
+            return jsonReply(res, 400, { error: "Document must be under 10 MB" })
+        let cleanName = safeFilename(body.filename or "unsigned.pdf")
+        let bkDir = join(UPLOAD_DIR, found.booking.id)
+        mkdirSync(bkDir, { recursive: true })
+        let storedName = String(nowMs()) + "-" + cleanName
+        writeFileSync(join(bkDir, storedName), buf)
+        let digest = sha256Hex(buf)
+        let docRec = store.addDocument(found.booking.id, cleanName, storedName, String(body.mimeType or "application/pdf"), buf.length, digest)
+        return jsonReply(res, 201, { ok: true, document: docRec })
+
+    // 8. Tennessee Digital Notary Seal SVG (public preview + admin studio)
+    if path == "/api/seal.svg" and method == "GET":
+        let s = store.getSettings()
+        let svg = buildSealSvg({
+            name: getProp(query, "name", s.commissionName),
+            county: getProp(query, "county", s.commissionCounty),
+            state: "STATE OF TENNESSEE",
+            expires: getProp(query, "expires", s.commissionExpires),
+            ink: getProp(query, "ink", "#0f172a")
+        })
+        let headers = {}
+        put(headers, "Content-Type", "image/svg+xml; charset=utf-8")
+        put(headers, "Cache-Control", "no-store")
+        return sendHttp(res, 200, headers, svg)
+
+    // 9. Admin Session Login / Logout
+    if path == "/api/admin/login" and method == "POST":
+        let raw = await readReqBody(req, 8192)
+        let body = tryJson(raw, {}) or {}
+        if not safeEq(String(body.pin or "").trim(), ADMIN_PIN):
+            return jsonReply(res, 401, { error: "Incorrect Owner PIN" })
+        let tok = makeAdminToken()
+        let headers = {}
+        put(headers, "Content-Type", "application/json; charset=utf-8")
+        put(headers, "Set-Cookie", "tn_admin=" + encodeURIComponent(tok) + "; Path=/; HttpOnly; SameSite=Lax; Max-Age=43200")
+        return sendHttp(res, 200, headers, JSON.stringify({ ok: true }))
+
+    if path == "/api/admin/logout" and method == "POST":
+        let headers = {}
+        put(headers, "Content-Type", "application/json; charset=utf-8")
+        put(headers, "Set-Cookie", "tn_admin=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
+        return sendHttp(res, 200, headers, JSON.stringify({ ok: true }))
+
+    // 10. Protected Owner Admin Routes
+    if path.startsWith("/api/admin/"):
+        if not isAdminReq(req):
+            return jsonReply(res, 401, { error: "Owner PIN session required" })
+
+        if path == "/api/admin/overview" and method == "GET":
+            let allBookings = store.listBookingsAdmin()
+            let grossCents = 0
+            let activeCount = 0
+            for each b in allBookings:
+                if b.status != "cancelled":
+                    set grossCents to grossCents + Number(b.total_cents or 0)
+                    set activeCount to activeCount + 1
+            return jsonReply(res, 200, {
+                ok: true,
+                kpis: {
+                    activeBookings: activeCount,
+                    grossRevenueCents: grossCents,
+                    journalCount: store.listJournal().length,
+                    b2bLeadsCount: store.listB2bLeads().length
+                },
+                settings: store.getSettings(),
+                services: store.listServices(false),
+                bookings: allBookings,
+                journal: store.listJournal(),
+                journalChain: store.verifyJournalChain(),
+                blackouts: store.listBlackouts(),
+                b2bLeads: store.listB2bLeads()
+            })
+
+        if path == "/api/admin/settings" and method == "POST":
+            let raw = await readReqBody(req, 32768)
+            let body = tryJson(raw, {}) or {}
+            return jsonReply(res, 200, { ok: true, settings: store.saveSettings(body) })
+
+        if path == "/api/admin/bookings/update" and method == "POST":
+            let raw = await readReqBody(req, 16384)
+            let body = tryJson(raw, {}) or {}
+            let updated = store.updateBookingAdmin(body.id, body.status, body.ronUrl, body.paymentStatus)
+            if updated == null:
+                return jsonReply(res, 404, { error: "Booking not found" })
+            return jsonReply(res, 200, { ok: true, booking: updated })
+
+        if path == "/api/admin/journal/add" and method == "POST":
+            let raw = await readReqBody(req, 32768)
+            let body = tryJson(raw, {}) or {}
+            if String(body.signerName or "").trim() == "" or String(body.docTitle or "").trim() == "":
+                return jsonReply(res, 400, { error: "Signer name and document title are required for journal compliance" })
+            let entry = store.addJournalEntry(body)
+            return jsonReply(res, 201, { ok: true, entry: entry, chain: store.verifyJournalChain() })
+
+        if path == "/api/admin/blackouts" and method == "POST":
+            let raw = await readReqBody(req, 8192)
+            let body = tryJson(raw, {}) or {}
+            if body.action == "remove":
+                return jsonReply(res, 200, { ok: true, blackouts: store.removeBlackout(body.day) })
+            if not isValidDay(body.day):
+                return jsonReply(res, 400, { error: "Valid YYYY-MM-DD required" })
+            return jsonReply(res, 200, { ok: true, blackouts: store.addBlackout(body.day, body.reason) })
+
+        if path == "/api/admin/services/toggle" and method == "POST":
+            let raw = await readReqBody(req, 8192)
+            let body = tryJson(raw, {}) or {}
+            let svc = store.toggleService(body.slug, Boolean(body.active), body.basePriceCents)
+            return jsonReply(res, 200, { ok: true, service: svc, services: store.listServices(false) })
+
+        if path == "/api/admin/doc" and method == "GET":
+            let bkId = safeFilename(getProp(query, "bookingId", ""))
+            let stored = safeFilename(getProp(query, "file", ""))
+            let full = join(UPLOAD_DIR, bkId, stored)
+            if not existsSync(full):
+                return jsonReply(res, 404, { error: "Document file not found" })
+            let headers = {}
+            put(headers, "Content-Type", "application/pdf")
+            put(headers, "Content-Disposition", "inline; filename=\"" + stored + "\"")
+            return sendHttp(res, 200, headers, readFileSync(full))
+
+    // 11. Multi-page HTML Routes & Static Assets
+    if path == "/" or path == "/index.html":
+        return serveStaticPage(res, "index.html")
+    if path == "/portal":
+        return serveStaticPage(res, "portal.html")
+    if path == "/b2b":
+        return serveStaticPage(res, "b2b.html")
+    if path == "/admin":
+        return serveStaticPage(res, "admin.html")
+
+    let relAsset = path.replace(new RegExp("^/+"), "")
+    if relAsset != "" and not relAsset.includes(".."):
+        let assetFile = join(PUBLIC_DIR, relAsset)
+        if existsSync(assetFile):
+            return serveStaticPage(res, relAsset)
+
+    return jsonReply(res, 404, { error: "Not found" })
+
+let IS_MAIN = String(process.argv[1] or "").replace(new RegExp("\\\\", "g"), "/").endsWith("/server.mjs")
+if IS_MAIN:
+    let srv = createServer((req, res) -> handleRequest(req, res))
+    srv.listen(PORT, "0.0.0.0", () -> console.log("[TrustNotary] Lume server listening on :" + String(PORT) + " (" + APP_TZ + ")"))

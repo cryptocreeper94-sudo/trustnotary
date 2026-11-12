@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TrustNotary · Tennessee Online (RON) &amp; Middle TN Mobile Notary</title>
+  <meta name="description" content="Commissioned Tennessee Notary Public offering secure Remote Online Notarization (RON) from anywhere and prompt Mobile General Notary dispatch across Lebanon, Mt. Juliet, Murfreesboro &amp; Greater Nashville." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&amp;family=Playfair+Display:ital,wght@0,600;0,700;1,600&amp;family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body data-page="home">
+  <header class="tn-nav">
+    <div class="tn-nav-inner">
+      <div class="tn-nav-left">
+        <button type="button" class="tn-back-btn" id="btn-global-back" title="Go Back">&#8592; Back</button>
+        <a href="/" class="tn-brand">
+          <span class="tn-brand-seal">TN</span>
+          <span class="tn-brand-text">
+            <span id="nav-brand-name">TrustNotary</span>
+            <small>State of Tennessee Commissioned</small>
+          </span>
+        </a>
+      </div>
+      <nav class="tn-nav-links">
+        <a href="#services" class="tn-hide-mobile">Services</a>
+        <a href="#how-it-works" class="tn-hide-mobile">How It Works</a>
+        <a href="/b2b">Law &amp; B2B</a>
+        <a href="/portal">Signer Vault</a>
+        <button type="button" class="tn-btn tn-btn-gold tn-btn-sm" id="btn-hero-book-top">Book Now</button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="tn-hero">
+      <div class="tn-container tn-hero-grid">
+        <div>
+          <div class="tn-eyebrow" id="hero-banner-pill">&#9733; Online Webcam (RON) + Middle TN Mobile Dispatch</div>
+          <h1 class="tn-h1">Notarize Online in <em>10 Minutes</em> — or At Your Door Across Middle Tennessee.</h1>
+          <p class="tn-lead">
+            Meet securely over live video from anywhere in the world for <strong>$25</strong>, or book same-day mobile bedside, office, estate, title, and I-9 verification dispatched from <strong>37090 (Gladeville / Lebanon)</strong>.
+          </p>
+          <div class="tn-hero-actions">
+            <button type="button" class="tn-btn tn-btn-gold" id="btn-start-ron">Book Online Webcam ($25) &#8594;</button>
+            <button type="button" class="tn-btn tn-btn-outline" id="btn-start-mobile">Mobile Middle TN Quote</button>
+            <a href="/portal" class="tn-btn tn-btn-outline">Upload Docs (Signer Vault)</a>
+          </div>
+          <div class="tn-trust-pills">
+            <span>T.C.A. § 8-16-301 RON Compliant</span>
+            <span>T.C.A. § 8-21-1201 Upfront Quotes</span>
+            <span>SHA-256 Electronic Journal</span>
+          </div>
+        </div>
+
+        <aside class="tn-quick-card">
+          <div class="tn-card-badge">Instant Fee Estimator</div>
+          <h3>Check Your Exact Price Upfront</h3>
+          <p style="font-size:13.5px;color:var(--text-muted);margin:0 0 14px">Zero surprise fees. Select your service and ZIP to preview your itemized quote before booking.</p>
+          <div class="tn-field">
+            <label for="est-service">Service Type</label>
+            <select id="est-service" class="tn-select"></select>
+          </div>
+          <div class="tn-row-2">
+            <div class="tn-field">
+              <label for="est-seals">Notarial Seals</label>
+              <input id="est-seals" type="number" min="1" max="15" value="1" class="tn-input" />
+            </div>
+            <div class="tn-field" id="est-zip-wrap">
+              <label for="est-zip">Middle TN ZIP</label>
+              <input id="est-zip" type="text" maxlength="5" value="37090" placeholder="37090" class="tn-input" />
+            </div>
+          </div>
+          <div class="tn-quote-box" id="est-quote-output">
+            <div class="tn-quote-line"><span>Loading service catalog...</span><span>—</span></div>
+          </div>
+          <button type="button" class="tn-btn tn-btn-gold" style="width:100%" id="btn-est-continue">Select Date &amp; Time Slot &#8594;</button>
+        </aside>
+      </div>
+    </section>
+
+    <!-- Services Carousel (Dark Variant) -->
+    <section class="tn-section" id="services">
+      <div class="tn-container">
+        <div class="tn-section-head">
+          <div>
+            <div class="tn-eyebrow">Transparent Menu</div>
+            <h2 class="tn-h2">Choose Your Notarization Lane</h2>
+            <p class="tn-sub">Swipe or use the arrows below to compare pure digital webcam sessions, local Middle TN bedside/mobile visits, and B2B fast-track slots.</p>
+          </div>
+          <div class="tn-filter-bar" id="service-filters">
+            <button type="button" class="tn-chip active" data-filter="all">All Services</button>
+            <button type="button" class="tn-chip" data-filter="ron">Online Webcam (RON)</button>
+            <button type="button" class="tn-chip" data-filter="mobile">Mobile Middle TN</button>
+          </div>
+        </div>
+
+        <div class="tn-carousel-wrap" data-carousel="services">
+          <div class="tn-carousel-track" id="services-track"></div>
+          <div class="tn-carousel-controls">
+            <button type="button" class="tn-car-arrow" data-dir="-1" aria-label="Previous service">&#8249;</button>
+            <div class="tn-car-dots"></div>
+            <button type="button" class="tn-car-arrow" data-dir="1" aria-label="Next service">&#8250;</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- How It Works Carousel (Cream Variant) -->
+    <section class="tn-section tn-section-cream" id="how-it-works">
+      <div class="tn-container">
+        <div class="tn-section-head">
+          <div>
+            <h2 class="tn-h2">How Online &amp; Mobile Signing Works</h2>
+            <p class="tn-sub">Designed so you never waste an afternoon driving to a bank branch only to hear their notary stepped out.</p>
+          </div>
+        </div>
+
+        <div class="tn-carousel-wrap" data-carousel="steps">
+          <div class="tn-carousel-track">
+            <article class="tn-card">
+              <div>
+                <span class="tn-card-badge">Step 01 · Instant Quote &amp; Slot</span>
+                <h3>Pick Webcam or Mobile Dispatch</h3>
+                <p>Choose a 15-minute online video slot from anywhere, or enter your Middle Tennessee ZIP code for transparent upfront travel pricing.</p>
+              </div>
+              <div class="tn-price-row"><span style="font-size:12px;font-weight:700">Live Central-Time Calendar</span><span class="tn-price-big">60 sec</span></div>
+            </article>
+            <article class="tn-card">
+              <div>
+                <span class="tn-card-badge">Step 02 · Signer Vault PIN</span>
+                <h3>Upload Your Unsigned PDF Early</h3>
+                <p>Every booking issues a private 6-digit Signer Vault PIN so you can upload your unsigned PDF ahead of your video call with automatic SHA-256 fingerprinting.</p>
+              </div>
+              <div class="tn-price-row"><span style="font-size:12px;font-weight:700">Tamper-Evident Intake</span><span class="tn-price-big">SHA-256</span></div>
+            </article>
+            <article class="tn-card">
+              <div>
+                <span class="tn-card-badge">Step 03 · ID Check &amp; Execution</span>
+                <h3>Meet Live Over Video or Bedside</h3>
+                <p>Online signers verify government photo ID + KBA in two minutes and sign on screen. Mobile clients simply present their printed paperwork and photo ID.</p>
+              </div>
+              <div class="tn-price-row"><span style="font-size:12px;font-weight:700">TN Commissioned Seal</span><span class="tn-price-big">X.509</span></div>
+            </article>
+            <article class="tn-card">
+              <div>
+                <span class="tn-card-badge">Step 04 · Sealed Receipt &amp; Journal</span>
+                <h3>Immediate Delivery &amp; 5-Year Log</h3>
+                <p>Download your sealed PDF immediately after your online session. Every paid act is permanently recorded in our hash-chained Tennessee Notary Journal.</p>
+              </div>
+              <div class="tn-price-row"><span style="font-size:12px;font-weight:700">Statutory Compliance</span><span class="tn-price-big">100%</span></div>
+            </article>
+          </div>
+          <div class="tn-carousel-controls">
+            <button type="button" class="tn-car-arrow" data-dir="-1" aria-label="Previous step">&#8249;</button>
+            <div class="tn-car-dots"></div>
+            <button type="button" class="tn-car-arrow" data-dir="1" aria-label="Next step">&#8250;</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Coverage & Specialty Use-Cases Carousel (Dark Variant) -->
+    <section class="tn-section">
+      <div class="tn-container">
+        <div class="tn-section-head">
+          <div>
+            <div class="tn-eyebrow">Wilson · Rutherford · Davidson Counties</div>
+            <h2 class="tn-h2">Built for Urgent Real-Life Paperwork</h2>
+            <p class="tn-sub">For mobile visits, you bring the printed document and valid photo ID — we bring the Tennessee commission, seal, and bound journal right to your table.</p>
+          </div>
+          <a href="/b2b" class="tn-btn tn-btn-outline tn-btn-sm">Law Firm &amp; Contractor Accounts &#8594;</a>
+        </div>
+
+        <div class="tn-carousel-wrap" data-carousel="usecases">
+          <div class="tn-carousel-track">
+            <article class="tn-card">
+              <div>
+                <span class="tn-card-badge">Hospitals &amp; Senior Care</span>
+                <h3>Powers of Attorney &amp; Living Wills</h3>
+                <p>Same-day bedside dispatch to Vanderbilt Wilson County Hospital, TriStar Summit, StoneCrest, Ascension Saint Thomas, and assisted living communities.</p>
+              </div>
+            </article>
+            <article class="tn-card">
+              <div>
+                <span class="tn-card-badge">Construction &amp; Real Estate</span>
+                <h3>Contractor Lien Waivers &amp; Pay Apps</h3>
+                <p>Don't hold up a draw check waiting on a notary. Subcontractors and GCs hop on a 10-minute webcam call from the jobsite trailer and get sealed PDFs immediately.</p>
+              </div>
+            </article>
+            <article class="tn-card">
+              <div>
+                <span class="tn-card-badge">Remote Hires · HR Compliance</span>
+                <h3>Form I-9 Authorized Representative</h3>
+                <p>Starting a remote job in Lebanon, Mt. Juliet, Smyrna, or Murfreesboro? We inspect original Section 2 ID documents in person in 15 minutes — zero printing needed.</p>
+              </div>
+            </article>
+            <article class="tn-card">
+              <div>
+                <span class="tn-card-badge">Auto, Family &amp; International</span>
+                <h3>Titles, Bills of Sale &amp; Travel Consents</h3>
+                <p>Out-of-state vehicle transfers, minor passport/travel consent DS-3053, affidavits of heirship, and US documents signed by travelers abroad via Tennessee RON.</p>
+              </div>
+            </article>
+          </div>
+          <div class="tn-carousel-controls">
+            <button type="button" class="tn-car-arrow" data-dir="-1" aria-label="Previous card">&#8249;</button>
+            <div class="tn-car-dots"></div>
+            <button type="button" class="tn-car-arrow" data-dir="1" aria-label="Next card">&#8250;</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 2-Step Bottom-Sheet Booking Drawer -->
+  <div class="tn-sheet-backdrop" id="booking-sheet">
+    <div class="tn-sheet">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div>
+          <span class="tn-card-badge" id="sheet-step-badge" style="margin-bottom:4px">Step 1 of 2 · Service &amp; Upfront Quote</span>
+          <h3 id="sheet-title" style="margin:0;font-family:var(--font-serif);font-size:1.4rem">Reserve Your Notary Session</h3>
+        </div>
+        <button type="button" class="tn-back-btn" id="btn-close-sheet">&#10005; Close</button>
+      </div>
+
+      <!-- STEP 1 -->
+      <div id="sheet-step-1">
+        <div class="tn-field">
+          <label for="bk-service">Selected Service</label>
+          <select id="bk-service" class="tn-select"></select>
+        </div>
+        <div class="tn-row-2">
+          <div class="tn-field">
+            <label for="bk-seals">Number of Seals Needed</label>
+            <input id="bk-seals" type="number" min="1" max="15" value="1" class="tn-input" />
+          </div>
+          <div class="tn-field" id="bk-zip-group">
+            <label for="bk-zip">Appointment ZIP Code</label>
+            <input id="bk-zip" type="text" maxlength="5" value="37090" class="tn-input" />
+          </div>
+        </div>
+        <div class="tn-field" id="bk-address-group" style="display:none">
+          <label for="bk-address">Street Address, Hospital Room, or Coffee Shop</label>
+          <input id="bk-address" type="text" placeholder="e.g. 1411 Baddour Pkwy, Lebanon TN · Room 304" class="tn-input" />
+        </div>
+        <div class="tn-quote-box" id="bk-quote-box"></div>
+        <label style="display:flex;gap:10px;align-items:flex-start;font-size:13px;color:#cbd5e1;margin-bottom:16px;cursor:pointer">
+          <input type="checkbox" id="bk-fee-agree" checked style="margin-top:4px" />
+          <span>I review and agree to the itemized fee quote above prior to service (Tennessee statutory disclosure).</span>
+        </label>
+        <button type="button" class="tn-btn tn-btn-gold" style="width:100%" id="btn-to-step-2">Continue to Date &amp; Time &#8594;</button>
+      </div>
+
+      <!-- STEP 2 -->
+      <div id="sheet-step-2" style="display:none">
+        <div style="margin-bottom:12px">
+          <button type="button" class="tn-back-btn" id="btn-back-step-1">&#8592; Back to Quote</button>
+        </div>
+        <div class="tn-row-2">
+          <div class="tn-field">
+            <label for="bk-day">Appointment Date (Central Time)</label>
+            <input id="bk-day" type="date" class="tn-input" />
+          </div>
+          <div class="tn-field">
+            <label for="bk-doc-title">Document Type (Optional)</label>
+            <input id="bk-doc-title" type="text" placeholder="e.g. Power of Attorney, Vehicle Title" class="tn-input" />
+          </div>
+        </div>
+        <div class="tn-field">
+          <label>Available Central-Time Slots</label>
+          <div class="tn-slot-list" id="bk-slots"></div>
+        </div>
+        <div class="tn-row-2">
+          <div class="tn-field">
+            <label for="bk-name">Signer Full Legal Name</label>
+            <input id="bk-name" type="text" placeholder="As shown on photo ID" class="tn-input" />
+          </div>
+          <div class="tn-field">
+            <label for="bk-phone">Mobile Phone</label>
+            <input id="bk-phone" type="tel" placeholder="(615) 555-0199" class="tn-input" />
+          </div>
+        </div>
+        <div class="tn-field">
+          <label for="bk-email">Email Address (For Confirmation &amp; Vault PIN)</label>
+          <input id="bk-email" type="email" placeholder="you@example.com" class="tn-input" />
+        </div>
+        <div class="tn-field">
+          <label for="bk-notes">Special Notes (Hospital wing, gate code, witness needed)</label>
+          <input id="bk-notes" type="text" placeholder="Optional notes" class="tn-input" />
+        </div>
+        <div id="bk-error" style="color:#f87171;font-size:13px;margin-bottom:10px;display:none"></div>
+        <button type="button" class="tn-btn tn-btn-gold" style="width:100%" id="btn-submit-booking">Confirm Appointment &#8594;</button>
+      </div>
+
+      <!-- STEP 3: CONFIRMED -->
+      <div id="sheet-step-done" style="display:none"></div>
+    </div>
+  </div>
+
+  <footer class="tn-footer">
+    <div class="tn-container tn-footer-inner">
+      <div>
+        <strong style="color:#f8fafc">TrustNotary</strong> · Tennessee Notary Public (Wilson County · Base 37090)<br />
+        <span style="font-size:12px">A Tennessee Notary Public is not an attorney licensed to practice law and may not give legal advice.</span>
+      </div>
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+        <a href="/portal">Signer Vault</a>
+        <a href="/b2b">Law &amp; B2B</a>
+        <a href="mailto:team@dwsc.io">team@dwsc.io</a>
+        <span id="owner-secret-tap" style="cursor:default;user-select:none">© 2026 DarkWave Studios LLC</span>
+      </div>
+    </div>
+  </footer>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,108 @@
+/// TrustNotary — Deterministic Tennessee Quote & ZIP Travel Engine
+/// DarkWave Studios LLC — Copyright 2026
+///
+/// DDA 42-Doctrine Mapping:
+///   [13] Constraint Engine  - Enforces T.C.A. 8-16-301 ($25 statutory cap per online act)
+///   [14] Determinacy Engine - Same service + ZIP + seals + rush -> identical itemized quote
+///   [37] Null Boundary      - Unknown ZIP defaults transparently to explicit regional tier
+
+let MIDDLE_TN_ZIPS = [
+    ["37090", "Gladeville / Lebanon", 0, 1500],
+    ["37087", "Lebanon", 8, 2000],
+    ["37088", "Lebanon", 9, 2000],
+    ["37122", "Mt. Juliet", 11, 2500],
+    ["37121", "Mt. Juliet", 12, 2500],
+    ["37184", "Watertown", 13, 2500],
+    ["37076", "Hermitage", 16, 3000],
+    ["37138", "Old Hickory", 18, 3000],
+    ["37167", "Smyrna", 17, 3000],
+    ["37086", "La Vergne", 18, 3000],
+    ["37214", "Donelson / BNA Airport", 21, 3500],
+    ["37129", "Murfreesboro North", 21, 3500],
+    ["37130", "Murfreesboro Central", 23, 3500],
+    ["37128", "Murfreesboro West", 25, 3800],
+    ["37127", "Murfreesboro South", 27, 4000],
+    ["37066", "Gallatin", 24, 3800],
+    ["37075", "Hendersonville", 25, 4000],
+    ["37013", "Antioch", 22, 3500],
+    ["37201", "Downtown Nashville", 26, 4000],
+    ["37203", "Midtown / Gulch Nashville", 27, 4000],
+    ["37206", "East Nashville", 25, 3800],
+    ["37211", "South Nashville", 26, 4000],
+    ["37215", "Green Hills", 30, 4500],
+    ["37027", "Brentwood", 30, 4500],
+    ["37067", "Cool Springs / Franklin", 34, 5000],
+    ["37064", "Franklin", 36, 5500]
+]
+
+export to lookupZipZone(rawZip):
+    let z = String(rawZip or "").trim().slice(0, 5)
+    for each row in MIDDLE_TN_ZIPS:
+        if row[0] == z:
+            return { zip: z, area: row[1], miles: row[2], travelCents: row[3], matched: true }
+    if z.startsWith("370") or z.startsWith("371") or z.startsWith("372"):
+        return { zip: z, area: "Greater Middle Tennessee", miles: 28, travelCents: 4200, matched: false }
+    if z.length == 5:
+        return { zip: z, area: "Extended Tennessee Dispatch", miles: 42, travelCents: 6000, matched: false }
+    return { zip: "37090", area: "Gladeville / Lebanon Base", miles: 5, travelCents: 1500, matched: false }
+
+export to dollarsOf(cents):
+    let n = Math.max(0, Math.round(Number(cents or 0)))
+    let whole = Math.floor(n / 100)
+    let rem = n % 100
+    if rem == 0:
+        return "$" + String(whole)
+    return "$" + String(whole) + "." + String(rem).padStart(2, "0")
+
+export to computeQuote(service, opts):
+    let o = opts or {}
+    let modality = String(service.modality or "ron")
+    let seals = Math.max(1, Math.min(20, Math.round(Number(o.sealCount or 1))))
+    let extraSeals = Math.max(0, seals - 1)
+    let afterHours = Boolean(o.afterHours)
+    let items = []
+
+    // Statutory guard (Doctrine 13): TN online notary act fee never exceeds $25.00 per first seal
+    let baseCents = Number(service.basePriceCents or service.base_price_cents or 2500)
+    if modality == "ron" and baseCents > 2500:
+        set baseCents to 2500
+
+    let baseLabel = if modality == "ron" then "Online Notarial Act (1st seal · T.C.A. § 8-16-301)" else service.name + " (Base Service)"
+    items.push({ label: baseLabel, cents: baseCents })
+
+    let witnessCents = Number(service.witnessFeeCents or service.witness_fee_cents or 0)
+    if witnessCents > 0:
+        items.push({ label: "Remote Witness Coordination", cents: witnessCents })
+
+    let perExtra = Number(service.extraSealCents or service.extra_seal_cents or 1000)
+    let extraTotal = extraSeals * perExtra
+    if extraTotal > 0:
+        items.push({ label: "Additional Notarial Seals (" + String(extraSeals) + " × " + dollarsOf(perExtra) + ")", cents: extraTotal })
+
+    let travelCents = 0
+    let zone = null
+    if modality == "mobile":
+        set zone to lookupZipZone(o.zip)
+        set travelCents to zone.travelCents
+        items.push({ label: "Mobile Travel & Dispatch (" + zone.area + " · ~" + String(zone.miles) + " mi from 37090)", cents: travelCents })
+
+    let rushCents = if afterHours then 2000 else 0
+    if rushCents > 0:
+        items.push({ label: "After-Hours / Priority Dispatch", cents: rushCents })
+
+    let totalCents = 0
+    for each it in items:
+        set totalCents to totalCents + it.cents
+
+    let statuteNote = if modality == "ron" then "Compliant with Tennessee Online Notary Public Act (T.C.A. § 8-16-301; max $25 per online notarial act)." else "Disclosed upfront per Tennessee Code Annotated § 8-21-1201 (reasonable compensation + agreed mobile travel fee; recorded in Notary Journal)."
+
+    return {
+        modality: modality,
+        sealCount: seals,
+        afterHours: afterHours,
+        zone: zone,
+        items: items,
+        totalCents: totalCents,
+        totalDisplay: dollarsOf(totalCents),
+        statuteNote: statuteNote
+    }

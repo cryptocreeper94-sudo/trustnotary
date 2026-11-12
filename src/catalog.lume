@@ -1,0 +1,152 @@
+/// TrustNotary — Service Catalog & Tennessee Compliance Ontology
+/// DarkWave Studios LLC — Copyright 2026
+///
+/// DDA 42-Doctrine Mapping:
+///   [01] Identity Kernel        - Canonical service IDs and Tennessee statutory categories
+///   [03] Differentiation Engine - Separates RON (T.C.A. 8-16-301) vs Mobile GNW (T.C.A. 8-21-1201) vs B2B
+///   [09] Ontology Model         - Formal schema of modalities, durations, buffers, and paper rules
+
+export let DEFAULT_SETTINGS = {
+    brandName: "TrustNotary",
+    tagline: "Tennessee Online & Middle TN Mobile Notary",
+    commissionName: "Ronald Jason Andrews",
+    commissionCounty: "Wilson County",
+    commissionState: "Tennessee",
+    commissionNumber: "Pending Online Upgrade",
+    commissionExpires: "2029-12-31",
+    ronStatus: "live_booking",
+    ronStatusBanner: "Book Online (RON) Anywhere or Mobile Across Wilson, Rutherford & Davidson Counties",
+    defaultRonUrl: "https://app.bluenotary.us",
+    baseZip: "37090",
+    baseLabel: "Gladeville / Lebanon, TN 37090",
+    contactEmail: "team@dwsc.io",
+    contactPhone: "(615) 555-0142",
+    weekdayStartMin: 480,
+    weekdayEndMin: 1200,
+    saturdayStartMin: 540,
+    saturdayEndMin: 1080,
+    sundayStartMin: 720,
+    sundayEndMin: 1020
+}
+
+export let SEED_SERVICES = [
+    {
+        slug: "ron-standard",
+        modality: "ron",
+        category: "Online Webcam (RON)",
+        name: "Remote Online Notarization",
+        badge: "ZERO PRINTER · FROM ANYWHERE",
+        basePriceCents: 2500,
+        extraSealCents: 1000,
+        durationMinutes: 20,
+        bufferMinutes: 10,
+        leadMinutes: 30,
+        paperNote: "100% digital PDF + X.509 cryptographic seal & recorded video session.",
+        description: "Meet securely over live two-way audio/video from your phone or laptop anywhere in the world. Upload your PDF, verify your ID in 2 minutes, and download your sealed, tamper-evident document immediately.",
+        active: 1,
+        sortOrder: 1
+    },
+    {
+        slug: "ron-witness",
+        modality: "ron",
+        category: "Online Webcam (RON)",
+        name: "Online Notarization + Witness Coordination",
+        badge: "POWERS OF ATTORNEY · AFFIDAVITS",
+        basePriceCents: 2500,
+        witnessFeeCents: 2000,
+        extraSealCents: 1000,
+        durationMinutes: 30,
+        bufferMinutes: 10,
+        leadMinutes: 60,
+        paperNote: "$25 statutory online act + $20 remote witness coordination.",
+        description: "Need an independent remote witness on the video call alongside your online notarization? Ideal for powers of attorney, parental travel consents, and sworn statements.",
+        active: 1,
+        sortOrder: 2
+    },
+    {
+        slug: "mobile-hospital-poa",
+        modality: "mobile",
+        category: "Mobile Middle TN (We Come to You)",
+        name: "Hospital, Rehab & Senior Living Bedside",
+        badge: "CLIENT HAS PRINTED DOCS",
+        basePriceCents: 5500,
+        extraSealCents: 1000,
+        durationMinutes: 40,
+        bufferMinutes: 35,
+        leadMinutes: 90,
+        paperNote: "Please have your printed document & valid photo ID ready at bedside.",
+        description: "Compassionate, prompt bedside notarization for Powers of Attorney, Living Wills, and Healthcare Directives at Vanderbilt Wilson County, Summit, StoneCrest, St. Thomas, and local care communities.",
+        active: 1,
+        sortOrder: 3
+    },
+    {
+        slug: "mobile-estate-trust",
+        modality: "mobile",
+        category: "Mobile Middle TN (We Come to You)",
+        name: "Trust, Will & Estate Signing",
+        badge: "CLIENT / ATTORNEY PRINTED",
+        basePriceCents: 7500,
+        extraSealCents: 1000,
+        durationMinutes: 45,
+        bufferMinutes: 35,
+        leadMinutes: 120,
+        paperNote: "Designed for attorney-prepared printed packets ready for table signing.",
+        description: "Unhurried kitchen-table or law-office execution for family trusts, wills, deeds, and estate packets across Lebanon, Mt. Juliet, Murfreesboro, Hermitage, and Greater Nashville.",
+        active: 1,
+        sortOrder: 4
+    },
+    {
+        slug: "mobile-i9-verify",
+        modality: "mobile",
+        category: "Mobile Middle TN (We Come to You)",
+        name: "Remote Employee I-9 Verification",
+        badge: "ZERO PAPER · 15 MIN",
+        basePriceCents: 5000,
+        extraSealCents: 0,
+        durationMinutes: 20,
+        bufferMinutes: 30,
+        leadMinutes: 90,
+        paperNote: "Completed directly on your employer portal (Workday, Rippling, Deel) or 1 sheet.",
+        description: "Authorized Representative Section 2 physical ID inspection for remote hires in Wilson, Rutherford, and Davidson Counties. Fast, accurate, and accepted by HR platforms nationwide.",
+        active: 1,
+        sortOrder: 5
+    },
+    {
+        slug: "mobile-title-gnw",
+        modality: "mobile",
+        category: "Mobile Middle TN (We Come to You)",
+        name: "Vehicle Title, Bill of Sale & General Notary",
+        badge: "LOCAL DISPATCH · 37090 BASE",
+        basePriceCents: 3500,
+        extraSealCents: 1000,
+        durationMinutes: 25,
+        bufferMinutes: 30,
+        leadMinutes: 90,
+        paperNote: "Bring your un-signed title or affidavit and government photo ID.",
+        description: "On-site notarization at your driveway, coffee shop, dealership, or office for auto/boat titles, bills of sale, contractor lien waivers, and school/travel forms.",
+        active: 1,
+        sortOrder: 6
+    },
+    {
+        slug: "b2b-contractor-legal",
+        modality: "ron",
+        category: "B2B Priority · Law & Construction",
+        name: "Contractor Lien Waiver / Law Firm Overflow",
+        badge: "SAME-DAY B2B FAST TRACK",
+        basePriceCents: 2500,
+        extraSealCents: 1000,
+        durationMinutes: 15,
+        bufferMinutes: 10,
+        leadMinutes: 30,
+        paperNote: "Instant digital PDF turnaround for pay apps, AIA G702/G703, and affidavits.",
+        description: "Dedicated fast-lane online notarization for Tennessee general contractors, subcontractors, property managers, and solo/small law firms needing reliable same-day execution.",
+        active: 1,
+        sortOrder: 7
+    }
+]
+
+export to defaultServiceBySlug(slug):
+    for each s in SEED_SERVICES:
+        if s.slug == slug:
+            return s
+    return null

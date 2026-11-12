@@ -1,0 +1,257 @@
+/// TrustNotary — Persistent SQLite WAL Store & SHA-256 Notary Journal
+/// DarkWave Studios LLC — Copyright 2026
+///
+/// DDA 42-Doctrine Mapping:
+///   [07] Locality Engine    - All state isolated inside /app/data persistent volume
+///   [22] Continuity Layer   - WAL-mode SQLite + atomic IMMEDIATE transactions
+///   [32] Integrity Layer    - SHA-256 hash-chained Tennessee Notary Journal (T.C.A. § 8-21-1201)
+///   [37] Null Boundary      - Parameterized SQL everywhere; missing keys fall back safely
+
+use { openSqlite, sha256Hex, hmacHex, safeEq, randCode, randPin, randId, isoNow, parseMs, tryJson, put, getProp } from "./shim/lume-interop.mjs"
+use { DEFAULT_SETTINGS, SEED_SERVICES } from "./catalog.lume"
+use { hasSlotConflict } from "./scheduler.lume"
+
+let GENESIS_HASH = "0000000000000000000000000000000000000000000000000000000000000000"
+
+let SCHEMA_SQL = [
+    "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+    "CREATE TABLE IF NOT EXISTS services (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL, modality TEXT NOT NULL, category TEXT NOT NULL, name TEXT NOT NULL, badge TEXT NOT NULL DEFAULT '', base_price_cents INTEGER NOT NULL, witness_fee_cents INTEGER NOT NULL DEFAULT 0, extra_seal_cents INTEGER NOT NULL DEFAULT 1000, duration_minutes INTEGER NOT NULL DEFAULT 20, buffer_minutes INTEGER NOT NULL DEFAULT 10, lead_minutes INTEGER NOT NULL DEFAULT 30, paper_note TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER DEFAULT 0);",
+    "CREATE TABLE IF NOT EXISTS bookings (id TEXT PRIMARY KEY, ref_code TEXT UNIQUE NOT NULL, vault_pin_hash TEXT NOT NULL, service_slug TEXT NOT NULL, service_name TEXT NOT NULL, modality TEXT NOT NULL, day TEXT NOT NULL, start_iso TEXT NOT NULL, end_iso TEXT NOT NULL, buffer_minutes INTEGER NOT NULL DEFAULT 10, seal_count INTEGER NOT NULL DEFAULT 1, after_hours INTEGER NOT NULL DEFAULT 0, zip TEXT NOT NULL DEFAULT '', address TEXT NOT NULL DEFAULT '', doc_title TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', client_name TEXT NOT NULL, client_email TEXT NOT NULL, client_phone TEXT NOT NULL, total_cents INTEGER NOT NULL, quote_json TEXT NOT NULL, fee_agreed INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'confirmed', payment_status TEXT NOT NULL DEFAULT 'pay_at_session', stripe_session_id TEXT NOT NULL DEFAULT '', ron_url TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);",
+    "CREATE INDEX IF NOT EXISTS idx_bookings_day ON bookings(day);",
+    "CREATE INDEX IF NOT EXISTS idx_bookings_ref ON bookings(ref_code);",
+    "CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, booking_id TEXT NOT NULL, filename TEXT NOT NULL, stored_name TEXT NOT NULL, mime_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, created_at TEXT NOT NULL);",
+    "CREATE INDEX IF NOT EXISTS idx_docs_booking ON documents(booking_id);",
+    "CREATE TABLE IF NOT EXISTS journal_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, entry_at TEXT NOT NULL, booking_ref TEXT NOT NULL DEFAULT '', modality TEXT NOT NULL, act_type TEXT NOT NULL, doc_title TEXT NOT NULL, signer_name TEXT NOT NULL, signer_address TEXT NOT NULL DEFAULT '', id_method TEXT NOT NULL, id_hint TEXT NOT NULL DEFAULT '', fee_cents INTEGER NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '', prev_hash TEXT NOT NULL, entry_hash TEXT NOT NULL);",
+    "CREATE TABLE IF NOT EXISTS blackout_dates (day TEXT PRIMARY KEY, reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);",
+    "CREATE TABLE IF NOT EXISTS b2b_leads (id INTEGER PRIMARY KEY AUTOINCREMENT, company TEXT NOT NULL, contact_name TEXT NOT NULL, email TEXT NOT NULL, phone TEXT NOT NULL DEFAULT '', role_type TEXT NOT NULL DEFAULT '', est_monthly_volume TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'new', created_at TEXT NOT NULL);"
+].join("\n")
+
+export to createStore(dbFile, secret):
+    let db = openSqlite(dbFile)
+    db.exec(SCHEMA_SQL)
+
+    // Seed default settings without overwriting customized values
+    for each k in Object.keys(DEFAULT_SETTINGS):
+        let existing = db.get("SELECT value FROM settings WHERE key = ?", [k])
+        if existing == null:
+            db.run("INSERT INTO settings (key, value) VALUES (?, ?)", [k, String(getProp(DEFAULT_SETTINGS, k, ""))])
+
+    // Seed default services if empty
+    let countRow = db.get("SELECT COUNT(*) AS c FROM services", [])
+    if Number((countRow and countRow.c) or 0) == 0:
+        for each s in SEED_SERVICES:
+            db.run(
+                "INSERT INTO services (slug, modality, category, name, badge, base_price_cents, witness_fee_cents, extra_seal_cents, duration_minutes, buffer_minutes, lead_minutes, paper_note, description, active, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [s.slug, s.modality, s.category, s.name, s.badge or "", s.basePriceCents, s.witnessFeeCents or 0, s.extraSealCents or 1000, s.durationMinutes, s.bufferMinutes, s.leadMinutes, s.paperNote or "", s.description or "", s.active, s.sortOrder]
+            )
+
+    to getSettings():
+        let rows = db.all("SELECT key, value FROM settings", [])
+        let out = {}
+        for each k in Object.keys(DEFAULT_SETTINGS):
+            put(out, k, getProp(DEFAULT_SETTINGS, k, ""))
+        for each r in rows:
+            put(out, r.key, r.value)
+        return out
+
+    to saveSettings(patch):
+        for each k in Object.keys(patch or {}):
+            if Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, k):
+                let val = String(getProp(patch, k, ""))
+                db.run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [k, val])
+        return getSettings()
+
+    to listServices(onlyActive):
+        if onlyActive:
+            return db.all("SELECT * FROM services WHERE active = 1 ORDER BY sort_order ASC, id ASC", [])
+        return db.all("SELECT * FROM services ORDER BY sort_order ASC, id ASC", [])
+
+    to getServiceBySlug(slug):
+        return db.get("SELECT * FROM services WHERE slug = ?", [String(slug or "")])
+
+    to toggleService(slug, activeFlag, priceCents):
+        let svc = getServiceBySlug(slug)
+        if svc == null:
+            return null
+        let nextActive = if activeFlag then 1 else 0
+        let nextPrice = if priceCents != null and Number(priceCents) >= 0 then Math.round(Number(priceCents)) else svc.base_price_cents
+        db.run("UPDATE services SET active = ?, base_price_cents = ? WHERE slug = ?", [nextActive, nextPrice, slug])
+        return getServiceBySlug(slug)
+
+    to bookingsForDay(dayStr):
+        return db.all("SELECT * FROM bookings WHERE day = ? AND status != 'cancelled' ORDER BY start_iso ASC", [String(dayStr)])
+
+    to listBlackouts():
+        return db.all("SELECT * FROM blackout_dates ORDER BY day ASC", [])
+
+    to addBlackout(dayStr, reason):
+        db.run("INSERT INTO blackout_dates (day, reason, created_at) VALUES (?, ?, ?) ON CONFLICT(day) DO UPDATE SET reason = excluded.reason", [String(dayStr), String(reason or "Unavailable"), isoNow()])
+        return listBlackouts()
+
+    to removeBlackout(dayStr):
+        db.run("DELETE FROM blackout_dates WHERE day = ?", [String(dayStr)])
+        return listBlackouts()
+
+    to createBookingAtomic(payload):
+        let id = randId()
+        let refCode = "TN-" + randCode(6)
+        let rawPin = randPin(6)
+        let pinHash = hmacHex(secret, "vault-pin", rawPin)
+        let startMs = parseMs(payload.startIso)
+        let endMs = parseMs(payload.endIso)
+        let bufMin = Number(payload.bufferMinutes or 10)
+        let settings = getSettings()
+        let ronUrl = if payload.modality == "ron" then String(settings.defaultRonUrl or "") else ""
+
+        to runBookingInsert():
+            let sameDay = db.all("SELECT start_iso, end_iso, buffer_minutes, status FROM bookings WHERE day = ? AND status != 'cancelled'", [payload.day])
+            if hasSlotConflict(startMs, endMs, bufMin, sameDay):
+                return { conflict: true }
+            db.run(
+                "INSERT INTO bookings (id, ref_code, vault_pin_hash, service_slug, service_name, modality, day, start_iso, end_iso, buffer_minutes, seal_count, after_hours, zip, address, doc_title, notes, client_name, client_email, client_phone, total_cents, quote_json, fee_agreed, status, payment_status, stripe_session_id, ron_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [id, refCode, pinHash, payload.serviceSlug, payload.serviceName, payload.modality, payload.day, payload.startIso, payload.endIso, bufMin, payload.sealCount, (if payload.afterHours then 1 else 0), payload.zip or "", payload.address or "", payload.docTitle or "", payload.notes or "", payload.clientName, payload.clientEmail, payload.clientPhone, payload.totalCents, JSON.stringify(payload.quote), 1, payload.status or "confirmed", payload.paymentStatus or "pay_at_session", "", ronUrl, isoNow()]
+            )
+            return { conflict: false, id: id, refCode: refCode, vaultPin: rawPin }
+
+        let txRes = db.tx(() -> runBookingInsert())
+
+        if not txRes.ok:
+            return { ok: false, error: txRes.error }
+        if txRes.value.conflict:
+            return { ok: false, conflict: true, error: "That time slot was just reserved. Please pick another time." }
+        let row = db.get("SELECT * FROM bookings WHERE id = ?", [id])
+        return { ok: true, booking: row, vaultPin: rawPin }
+
+    to verifyPortalAccess(identifier, pin):
+        let cleanId = String(identifier or "").trim()
+        let cleanPin = String(pin or "").trim()
+        if cleanId == "" or cleanPin == "":
+            return null
+        let candidateHash = hmacHex(secret, "vault-pin", cleanPin)
+        let rows = db.all(
+            "SELECT * FROM bookings WHERE UPPER(ref_code) = UPPER(?) OR LOWER(client_email) = LOWER(?) OR client_phone = ? ORDER BY created_at DESC LIMIT 10",
+            [cleanId, cleanId, cleanId]
+        )
+        for each r in rows:
+            if safeEq(r.vault_pin_hash, candidateHash):
+                let docs = db.all("SELECT id, filename, mime_type, size_bytes, sha256, created_at FROM documents WHERE booking_id = ? ORDER BY created_at DESC", [r.id])
+                return { booking: r, quote: tryJson(r.quote_json, {}), documents: docs }
+        return null
+
+    to addDocument(bookingId, filename, storedName, mimeType, sizeBytes, sha256):
+        let docId = randId()
+        db.run(
+            "INSERT INTO documents (id, booking_id, filename, stored_name, mime_type, size_bytes, sha256, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [docId, bookingId, filename, storedName, mimeType, sizeBytes, sha256, isoNow()]
+        )
+        return db.get("SELECT id, filename, mime_type, size_bytes, sha256, created_at FROM documents WHERE id = ?", [docId])
+
+    to listBookingsAdmin():
+        let rows = db.all("SELECT * FROM bookings ORDER BY start_iso DESC LIMIT 200", [])
+        let out = []
+        for each r in rows:
+            let docs = db.all("SELECT id, filename, stored_name, size_bytes, sha256, created_at FROM documents WHERE booking_id = ? ORDER BY created_at DESC", [r.id])
+            out.push({ ...r, quote: tryJson(r.quote_json, {}), documents: docs })
+        return out
+
+    to getBookingById(id):
+        return db.get("SELECT * FROM bookings WHERE id = ?", [String(id or "")])
+
+    to setStripeSession(bookingId, sessionId):
+        db.run("UPDATE bookings SET stripe_session_id = ?, payment_status = 'checkout_created' WHERE id = ?", [String(sessionId), String(bookingId)])
+
+    to updateBookingAdmin(id, status, ronUrl, paymentStatus):
+        let cur = getBookingById(id)
+        if cur == null:
+            return null
+        let nextStatus = if status then String(status) else cur.status
+        let nextUrl = if ronUrl != null then String(ronUrl) else cur.ron_url
+        let nextPay = if paymentStatus then String(paymentStatus) else cur.payment_status
+        db.run("UPDATE bookings SET status = ?, ron_url = ?, payment_status = ? WHERE id = ?", [nextStatus, nextUrl, nextPay, String(id)])
+        return getBookingById(id)
+
+    to addJournalEntry(entry):
+        let last = db.get("SELECT entry_hash FROM journal_entries ORDER BY id DESC LIMIT 1", [])
+        let prevHash = if last and last.entry_hash then last.entry_hash else GENESIS_HASH
+        let stamp = isoNow()
+        let canonical = [
+            stamp,
+            String(entry.bookingRef or ""),
+            String(entry.modality or "ron"),
+            String(entry.actType or "Acknowledgment"),
+            String(entry.docTitle or ""),
+            String(entry.signerName or ""),
+            String(entry.signerAddress or ""),
+            String(entry.idMethod or "Government Photo ID + KBA"),
+            String(entry.idHint or ""),
+            String(Math.round(Number(entry.feeCents or 0))),
+            prevHash
+        ].join("|")
+        let entryHash = sha256Hex(canonical)
+        db.run(
+            "INSERT INTO journal_entries (entry_at, booking_ref, modality, act_type, doc_title, signer_name, signer_address, id_method, id_hint, fee_cents, notes, prev_hash, entry_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [stamp, String(entry.bookingRef or ""), String(entry.modality or "ron"), String(entry.actType or "Acknowledgment"), String(entry.docTitle or ""), String(entry.signerName or ""), String(entry.signerAddress or ""), String(entry.idMethod or "Government Photo ID + KBA"), String(entry.idHint or ""), Math.round(Number(entry.feeCents or 0)), String(entry.notes or ""), prevHash, entryHash]
+        )
+        return db.get("SELECT * FROM journal_entries ORDER BY id DESC LIMIT 1", [])
+
+    to listJournal():
+        return db.all("SELECT * FROM journal_entries ORDER BY id DESC LIMIT 250", [])
+
+    to verifyJournalChain():
+        let rows = db.all("SELECT * FROM journal_entries ORDER BY id ASC", [])
+        let expectedPrev = GENESIS_HASH
+        for each r in rows:
+            if r.prev_hash != expectedPrev:
+                return { intact: false, count: rows.length, brokenAtId: r.id }
+            let canonical = [
+                r.entry_at,
+                r.booking_ref,
+                r.modality,
+                r.act_type,
+                r.doc_title,
+                r.signer_name,
+                r.signer_address,
+                r.id_method,
+                r.id_hint,
+                String(r.fee_cents),
+                r.prev_hash
+            ].join("|")
+            if sha256Hex(canonical) != r.entry_hash:
+                return { intact: false, count: rows.length, brokenAtId: r.id }
+            set expectedPrev to r.entry_hash
+        return { intact: true, count: rows.length, headHash: expectedPrev }
+
+    to addB2bLead(lead):
+        db.run(
+            "INSERT INTO b2b_leads (company, contact_name, email, phone, role_type, est_monthly_volume, message, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?)",
+            [String(lead.company or ""), String(lead.contactName or ""), String(lead.email or ""), String(lead.phone or ""), String(lead.roleType or ""), String(lead.estMonthlyVolume or ""), String(lead.message or ""), isoNow()]
+        )
+        return db.get("SELECT * FROM b2b_leads ORDER BY id DESC LIMIT 1", [])
+
+    to listB2bLeads():
+        return db.all("SELECT * FROM b2b_leads ORDER BY id DESC LIMIT 100", [])
+
+    return {
+        getSettings: getSettings,
+        saveSettings: saveSettings,
+        listServices: listServices,
+        getServiceBySlug: getServiceBySlug,
+        toggleService: toggleService,
+        bookingsForDay: bookingsForDay,
+        listBlackouts: listBlackouts,
+        addBlackout: addBlackout,
+        removeBlackout: removeBlackout,
+        createBookingAtomic: createBookingAtomic,
+        verifyPortalAccess: verifyPortalAccess,
+        addDocument: addDocument,
+        listBookingsAdmin: listBookingsAdmin,
+        getBookingById: getBookingById,
+        setStripeSession: setStripeSession,
+        updateBookingAdmin: updateBookingAdmin,
+        addJournalEntry: addJournalEntry,
+        listJournal: listJournal,
+        verifyJournalChain: verifyJournalChain,
+        addB2bLead: addB2bLead,
+        listB2bLeads: listB2bLeads,
+        close: () -> db.close()
+    }

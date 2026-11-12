@@ -1,0 +1,18 @@
+{
+  "name": "trustnotary",
+  "version": "1.0.0",
+  "description": "TrustNotary — Lume-Native Tennessee Remote Online Notary (RON) & Mobile Notary Funnel, Scheduler, Signer Vault & SHA-256 Electronic Journal",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build-lume.mjs",
+    "start": "node dist/server.mjs",
+    "test": "node scripts/build-lume.mjs && node dist/tests.mjs"
+  },
+  "dependencies": {
+    "lume-lang": "^1.1.0"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}

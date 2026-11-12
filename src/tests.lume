@@ -1,0 +1,99 @@
+/// TrustNotary — Native Lume Automated Test Suite
+/// DarkWave Studios LLC — Copyright 2026
+
+use { mkdtempSync, mkdirSync, rmSync } from "node:fs"
+use { join, dirname } from "node:path"
+use { fileURLToPath } from "node:url"
+use { computeQuote, lookupZipZone } from "./pricing.lume"
+use { computeAvailableSlots } from "./scheduler.lume"
+use { createStore } from "./store.lume"
+use { buildSealSvg } from "./seal.lume"
+use { tzSlotToEpoch, isoOf } from "./shim/lume-interop.mjs"
+
+to j(v):
+    return JSON.stringify(v)
+
+to runPricingCheck():
+    let ronSvc = { name: "RON", modality: "ron", basePriceCents: 3500, extraSealCents: 1000 }
+    let qRon = computeQuote(ronSvc, { sealCount: 2 })
+    let mobSvc = { name: "Mobile POA", modality: "mobile", basePriceCents: 5500, extraSealCents: 1000 }
+    let qMob = computeQuote(mobSvc, { sealCount: 1, zip: "37122", afterHours: false })
+    return j([qRon.items[0].cents, qRon.totalCents, lookupZipZone("37122").area, qMob.totalCents])
+
+to runSchedulerCheck():
+    let svc = { durationMinutes: 30, bufferMinutes: 30, leadMinutes: 30 }
+    let settings = { weekdayStartMin: 540, weekdayEndMin: 720 }
+    let morningEpoch = tzSlotToEpoch("2026-11-18", 420, "America/Chicago")
+    let slotsAll = computeAvailableSlots("2026-11-18", svc, [], [], settings, morningEpoch, "America/Chicago")
+    let bStart = isoOf(tzSlotToEpoch("2026-11-18", 600, "America/Chicago"))
+    let bEnd = isoOf(tzSlotToEpoch("2026-11-18", 630, "America/Chicago"))
+    let filtered = computeAvailableSlots("2026-11-18", svc, [{ start_iso: bStart, end_iso: bEnd, buffer_minutes: 30, status: "confirmed" }], [], settings, morningEpoch, "America/Chicago")
+    let blacked = computeAvailableSlots("2026-11-18", svc, [], ["2026-11-18"], settings, morningEpoch, "America/Chicago")
+    return j([slotsAll.length >= 5, filtered.length < slotsAll.length, blacked.length])
+
+to runStoreAndSealCheck():
+    let baseTmp = join(dirname(fileURLToPath(import.meta.url)), "..", "data")
+    mkdirSync(baseTmp, { recursive: true })
+    let dir = mkdtempSync(join(baseTmp, "tn-test-"))
+    let st = createStore(join(dir, "test.db"), "unit-secret")
+    let sIso = isoOf(tzSlotToEpoch("2026-11-19", 600, "America/Chicago"))
+    let eIso = isoOf(tzSlotToEpoch("2026-11-19", 620, "America/Chicago"))
+
+    let b1 = st.createBookingAtomic({
+        serviceSlug: "ron-standard",
+        serviceName: "Remote Online Notarization",
+        modality: "ron",
+        day: "2026-11-19",
+        startIso: sIso,
+        endIso: eIso,
+        bufferMinutes: 10,
+        sealCount: 1,
+        afterHours: false,
+        clientName: "Jane Signer",
+        clientEmail: "jane@example.com",
+        clientPhone: "6155550199",
+        totalCents: 2500,
+        quote: { totalCents: 2500 }
+    })
+
+    let b2 = st.createBookingAtomic({
+        serviceSlug: "ron-standard",
+        serviceName: "Remote Online Notarization",
+        modality: "ron",
+        day: "2026-11-19",
+        startIso: sIso,
+        endIso: eIso,
+        bufferMinutes: 10,
+        sealCount: 1,
+        afterHours: false,
+        clientName: "Duplicate Signer",
+        clientEmail: "dup@example.com",
+        clientPhone: "6155550100",
+        totalCents: 2500,
+        quote: { totalCents: 2500 }
+    })
+
+    let portalOk = st.verifyPortalAccess(b1.booking.ref_code, b1.vaultPin)
+    st.addJournalEntry({
+        bookingRef: b1.booking.ref_code,
+        modality: "ron",
+        actType: "Acknowledgment",
+        docTitle: "Power of Attorney",
+        signerName: "Jane Signer",
+        idMethod: "TN Driver License + KBA",
+        feeCents: 2500
+    })
+    let chain = st.verifyJournalChain()
+    let svg = buildSealSvg({ name: "RONALD JASON ANDREWS", county: "WILSON COUNTY" })
+    st.close()
+    rmSync(dir, { recursive: true, force: true })
+    return j([b1.ok, b2.conflict, portalOk.booking.client_name, chain.intact, chain.count, svg.includes("WILSON COUNTY")])
+
+test "Pricing enforces $25 TN online cap and calculates Mt. Juliet ZIP travel":
+    expect runPricingCheck() to equal j([2500, 3500, "Mt. Juliet", 8000])
+
+test "Scheduler computes Central slots and enforces buffers + blackout dates":
+    expect runSchedulerCheck() to equal j([true, true, 0])
+
+test "SQLite store blocks double-bookings atomically and verifies SHA-256 Notary Journal + TN Seal SVG":
+    expect runStoreAndSealCheck() to equal j([true, true, "Jane Signer", true, 1, true])

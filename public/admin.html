@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Owner Cockpit · TrustNotary Tennessee Commission &amp; Journal</title>
+  <meta name="robots" content="noindex,nofollow" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&amp;family=Playfair+Display:ital,wght@0,600;0,700;1,600&amp;family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body data-page="admin">
+  <header class="tn-nav">
+    <div class="tn-nav-inner">
+      <div class="tn-nav-left">
+        <button type="button" class="tn-back-btn" id="btn-global-back" title="Go Back">&#8592; Back</button>
+        <a href="/" class="tn-brand">
+          <span class="tn-brand-seal">TN</span>
+          <span class="tn-brand-text">
+            <span>TrustNotary Cockpit</span>
+            <small>Commission · Queue · SHA-256 Journal</small>
+          </span>
+        </a>
+      </div>
+      <nav class="tn-nav-links">
+        <a href="/">Public Site</a>
+        <a href="/portal">Signer Vault</a>
+        <button type="button" class="tn-btn tn-btn-outline tn-btn-sm" id="btn-admin-logout" style="display:none">Sign Out</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="tn-section" style="padding-top:36px">
+    <div class="tn-container">
+      <!-- PIN Gate -->
+      <div class="tn-panel" id="admin-login-box" style="max-width:440px;margin:28px auto;border-color:var(--border-gold)">
+        <span class="tn-card-badge">Commissioned Owner Access</span>
+        <h2 style="margin:0 0 8px;font-family:var(--font-serif)">Enter Owner PIN</h2>
+        <p style="font-size:13.5px;color:var(--text-muted);margin:0 0 16px">Unlock appointments, the SHA-256 Tennessee Electronic Notary Journal, and the Digital Seal PNG Studio.</p>
+        <div class="tn-field">
+          <label for="adm-pin">Owner PIN</label>
+          <input id="adm-pin" type="password" inputmode="numeric" placeholder="••••" class="tn-input" />
+        </div>
+        <div id="adm-login-err" style="color:#f87171;font-size:13px;margin-bottom:10px;display:none"></div>
+        <button type="button" class="tn-btn tn-btn-gold" style="width:100%" id="btn-adm-login">Unlock Cockpit &#8594;</button>
+      </div>
+
+      <!-- Authenticated Cockpit -->
+      <div id="admin-workspace" style="display:none">
+        <!-- KPI Carousel (Mandatory Horizontal Carousel, Never Flat Grid) -->
+        <div class="tn-carousel-wrap" data-carousel="admin-kpis" style="margin-bottom:28px">
+          <div class="tn-carousel-track">
+            <article class="tn-card" style="flex:0 0 min(270px,82vw)">
+              <div>
+                <span class="tn-card-badge">Active Bookings</span>
+                <h3 id="kpi-bookings" style="font-size:2rem;color:var(--gold-bright)">0</h3>
+                <p style="margin-bottom:0">Confirmed &amp; completed appointments</p>
+              </div>
+            </article>
+            <article class="tn-card" style="flex:0 0 min(270px,82vw)">
+              <div>
+                <span class="tn-card-badge">Booked Revenue</span>
+                <h3 id="kpi-revenue" style="font-size:2rem;color:var(--gold-bright)">$0</h3>
+                <p style="margin-bottom:0">Disclosed statutory &amp; travel fees</p>
+              </div>
+            </article>
+            <article class="tn-card" style="flex:0 0 min(270px,82vw)">
+              <div>
+                <span class="tn-card-badge">Notary Journal Chain</span>
+                <h3 id="kpi-journal" style="font-size:2rem;color:#4ade80">0</h3>
+                <p id="kpi-chain-state" style="margin-bottom:0">SHA-256 Genesis Intact</p>
+              </div>
+            </article>
+            <article class="tn-card" style="flex:0 0 min(270px,82vw)">
+              <div>
+                <span class="tn-card-badge">B2B Partner Leads</span>
+                <h3 id="kpi-b2b" style="font-size:2rem;color:var(--gold-bright)">0</h3>
+                <p style="margin-bottom:0">Law firms, GCs &amp; HR accounts</p>
+              </div>
+            </article>
+          </div>
+          <div class="tn-carousel-controls">
+            <button type="button" class="tn-car-arrow" data-dir="-1" aria-label="Previous metric">&#8249;</button>
+            <div class="tn-car-dots"></div>
+            <button type="button" class="tn-car-arrow" data-dir="1" aria-label="Next metric">&#8250;</button>
+          </div>
+        </div>
+
+        <!-- Cockpit Section Tabs -->
+        <div class="tn-filter-bar" id="adm-tabs" style="margin-bottom:22px">
+          <button type="button" class="tn-chip active" data-tab="bookings">1 · Appointments &amp; Docs</button>
+          <button type="button" class="tn-chip" data-tab="journal">2 · TN SHA-256 Notary Journal</button>
+          <button type="button" class="tn-chip" data-tab="seal">3 · Digital Seal PNG &amp; QR Flyer</button>
+          <button type="button" class="tn-chip" data-tab="settings">4 · Schedule, Blackouts &amp; Services</button>
+        </div>
+
+        <!-- TAB 1: Bookings Queue & B2B Leads -->
+        <section id="tab-bookings">
+          <div class="tn-panel">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+              <h3 style="margin:0;font-family:var(--font-serif)">Appointments Queue</h3>
+              <button type="button" class="tn-btn tn-btn-outline tn-btn-sm" id="btn-adm-refresh">Refresh Queue</button>
+            </div>
+            <div class="tn-table-wrap">
+              <table class="tn-table">
+                <thead>
+                  <tr>
+                    <th>Ref &amp; When</th>
+                    <th>Client</th>
+                    <th>Service &amp; Fee</th>
+                    <th>RON Room / Location &amp; Docs</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="adm-bookings-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="tn-panel">
+            <h3 style="margin:0 0 12px;font-family:var(--font-serif)">Commercial / B2B Partner Inquiries</h3>
+            <div class="tn-table-wrap">
+              <table class="tn-table">
+                <thead>
+                  <tr>
+                    <th>Company</th>
+                    <th>Contact</th>
+                    <th>Track &amp; Volume</th>
+                    <th>Notes</th>
+                  </tr>
+                </thead>
+                <tbody id="adm-b2b-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 2: SHA-256 Tennessee Electronic Notary Journal -->
+        <section id="tab-journal" style="display:none">
+          <div class="tn-panel" style="border-color:var(--border-gold)">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+              <div>
+                <span class="tn-card-badge">T.C.A. § 8-16-301 &amp; § 8-21-1201 Compliance</span>
+                <h3 style="margin:0;font-family:var(--font-serif)">Record Official Notarial Act</h3>
+              </div>
+              <span class="tn-badge-ok" id="jrn-chain-badge">Chain Verified</span>
+            </div>
+
+            <div class="tn-row-2">
+              <div class="tn-field">
+                <label for="jrn-ref">Booking Ref (Optional)</label>
+                <input id="jrn-ref" type="text" placeholder="TN-XXXXXX" class="tn-input" />
+              </div>
+              <div class="tn-field">
+                <label for="jrn-modality">Modality</label>
+                <select id="jrn-modality" class="tn-select">
+                  <option value="ron">Online Webcam (RON)</option>
+                  <option value="mobile">In-Person / Mobile</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="tn-row-2">
+              <div class="tn-field">
+                <label for="jrn-act">Notarial Act Type</label>
+                <select id="jrn-act" class="tn-select">
+                  <option value="Acknowledgment">Acknowledgment</option>
+                  <option value="Jurat / Verification on Oath">Jurat / Verification on Oath</option>
+                  <option value="Witnessing / Attesting Signature">Witnessing / Attesting Signature</option>
+                  <option value="I-9 Authorized Representative">Form I-9 Authorized Representative</option>
+                </select>
+              </div>
+              <div class="tn-field">
+                <label for="jrn-doc">Document Title / Description *</label>
+                <input id="jrn-doc" type="text" placeholder="e.g. Durable Financial Power of Attorney" class="tn-input" />
+              </div>
+            </div>
+
+            <div class="tn-row-2">
+              <div class="tn-field">
+                <label for="jrn-signer">Principal Signer Full Name *</label>
+                <input id="jrn-signer" type="text" placeholder="Full legal name" class="tn-input" />
+              </div>
+              <div class="tn-field">
+                <label for="jrn-addr">Signer City/State or Address</label>
+                <input id="jrn-addr" type="text" placeholder="Lebanon, TN 37090" class="tn-input" />
+              </div>
+            </div>
+
+            <div class="tn-row-2">
+              <div class="tn-field">
+                <label for="jrn-id-method">Identity Verification Method</label>
+                <select id="jrn-id-method" class="tn-select">
+                  <option value="Credential Analysis + KBA + Audio/Video (RON)">Credential Analysis + KBA + Audio/Video (RON)</option>
+                  <option value="Unexpired Government Photo ID (In-Person)">Unexpired Government Photo ID (In-Person)</option>
+                  <option value="Personal Knowledge">Personal Knowledge</option>
+                  <option value="Credible Identifying Witness">Credible Identifying Witness</option>
+                </select>
+              </div>
+              <div class="tn-field">
+                <label for="jrn-fee">Fee Collected (USD Dollars)</label>
+                <input id="jrn-fee" type="number" step="0.01" min="0" value="25" class="tn-input" />
+              </div>
+            </div>
+
+            <div class="tn-field">
+              <label for="jrn-notes">ID Issuing State / Expiration Year &amp; Notes (Never enter full SSN or DL#)</label>
+              <input id="jrn-notes" type="text" placeholder="e.g. TN Driver License exp 2029 · 2-way video retained" class="tn-input" />
+            </div>
+
+            <div id="jrn-feedback" style="font-size:13px;margin-bottom:10px;display:none"></div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <button type="button" class="tn-btn tn-btn-gold" id="btn-jrn-add">Append Hash-Chained Journal Entry</button>
+              <button type="button" class="tn-btn tn-btn-outline" id="btn-jrn-export">Export Journal JSON Backup</button>
+            </div>
+          </div>
+
+          <div class="tn-panel">
+            <h3 style="margin:0 0 12px;font-family:var(--font-serif)">Immutable Journal Ledger</h3>
+            <div class="tn-table-wrap">
+              <table class="tn-table">
+                <thead>
+                  <tr>
+                    <th># / Timestamp</th>
+                    <th>Signer &amp; Document</th>
+                    <th>Act &amp; ID Method</th>
+                    <th>Fee</th>
+                    <th>SHA-256 Chain</th>
+                  </tr>
+                </thead>
+                <tbody id="adm-journal-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 3: Tennessee Digital Seal SVG/PNG Studio + Printable QR Card -->
+        <section id="tab-seal" style="display:none">
+          <div class="tn-row-2" style="align-items:start">
+            <div class="tn-panel" style="border-color:var(--border-gold)">
+              <span class="tn-card-badge">$0 BlueNotary &amp; TN SOS Stamp Export</span>
+              <h3 style="margin:0 0 8px;font-family:var(--font-serif)">Tennessee Circular Digital Seal Studio</h3>
+              <p style="font-size:13.5px;color:var(--text-muted);margin:0 0 14px">
+                Generate your crisp high-resolution transparent PNG circular Tennessee Notary Seal for your TN Secretary of State Online Notary application and BlueNotary profile — no paid stamp vendor needed.
+              </p>
+
+              <div class="tn-field">
+                <label for="seal-name">Commissioned Name on Seal</label>
+                <input id="seal-name" type="text" class="tn-input" />
+              </div>
+              <div class="tn-row-2">
+                <div class="tn-field">
+                  <label for="seal-county">County of Election</label>
+                  <input id="seal-county" type="text" class="tn-input" />
+                </div>
+                <div class="tn-field">
+                  <label for="seal-exp">Commission Expiration</label>
+                  <input id="seal-exp" type="text" placeholder="2029-12-31" class="tn-input" />
+                </div>
+              </div>
+              <div class="tn-field">
+                <label for="seal-ink">Official Seal Ink Color (TN Circular Design)</label>
+                <select id="seal-ink" class="tn-select">
+                  <option value="#0f172a">Midnight Navy / Black (#0f172a)</option>
+                  <option value="#1e3a8a">Royal Archival Blue (#1e3a8a)</option>
+                  <option value="#7c2d12">Deep Crimson / Burgundy (#7c2d12)</option>
+                </select>
+              </div>
+
+              <div style="background:#f8fafc;border-radius:14px;padding:18px;display:grid;place-items:center;margin:14px 0">
+                <img id="seal-preview-img" alt="Tennessee Digital Notary Seal Preview" style="width:230px;height:230px" />
+              </div>
+
+              <div style="display:flex;gap:10px;flex-wrap:wrap">
+                <button type="button" class="tn-btn tn-btn-gold" id="btn-seal-png">Download Transparent PNG (1040×1040)</button>
+                <button type="button" class="tn-btn tn-btn-outline" id="btn-seal-preview">Update Preview</button>
+              </div>
+            </div>
+
+            <div class="tn-panel">
+              <span class="tn-card-badge">Hospital Desk · Networking · Truck Card</span>
+              <h3 style="margin:0 0 8px;font-family:var(--font-serif)">Printable Counter &amp; Wallet Card</h3>
+              <p style="font-size:13.5px;color:var(--text-muted);margin:0 0 14px">
+                Export a high-contrast 1200×720 booking card image showing your live URL, commission county, and $25 online webcam rate to text to attorneys, hospital social workers, or print on business cards.
+              </p>
+              <canvas id="flyer-canvas" width="600" height="360" style="width:100%;border-radius:12px;border:1px solid var(--border-gold);margin-bottom:14px"></canvas>
+              <button type="button" class="tn-btn tn-btn-gold" style="width:100%" id="btn-download-flyer">Download Shareable Booking Card PNG</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 4: Settings, Blackouts & Service Catalog -->
+        <section id="tab-settings" style="display:none">
+          <div class="tn-row-2" style="align-items:start">
+            <div class="tn-panel">
+              <span class="tn-card-badge">Commission &amp; Dispatch Profile</span>
+              <h3 style="margin:0 0 12px;font-family:var(--font-serif)">Business &amp; RON Room Settings</h3>
+              <div class="tn-field">
+                <label for="set-brand">Brand Name</label>
+                <input id="set-brand" type="text" class="tn-input" />
+              </div>
+              <div class="tn-field">
+                <label for="set-comm-name">Commissioned Notary Name</label>
+                <input id="set-comm-name" type="text" class="tn-input" />
+              </div>
+              <div class="tn-row-2">
+                <div class="tn-field">
+                  <label for="set-county">Commission County</label>
+                  <input id="set-county" type="text" class="tn-input" />
+                </div>
+                <div class="tn-field">
+                  <label for="set-exp">Commission Expiration</label>
+                  <input id="set-exp" type="text" class="tn-input" />
+                </div>
+              </div>
+              <div class="tn-field">
+                <label for="set-ron-url">Default Live RON Session Link (e.g. BlueNotary)</label>
+                <input id="set-ron-url" type="url" class="tn-input" />
+              </div>
+              <div class="tn-row-2">
+                <div class="tn-field">
+                  <label for="set-email">Notification / Public Email</label>
+                  <input id="set-email" type="email" class="tn-input" />
+                </div>
+                <div class="tn-field">
+                  <label for="set-phone">Public Phone</label>
+                  <input id="set-phone" type="text" class="tn-input" />
+                </div>
+              </div>
+              <div id="set-feedback" style="font-size:13px;margin-bottom:10px;display:none"></div>
+              <button type="button" class="tn-btn tn-btn-gold" id="btn-save-settings">Save Commission Settings</button>
+            </div>
+
+            <div class="tn-panel">
+              <span class="tn-card-badge">Calendar Guard</span>
+              <h3 style="margin:0 0 12px;font-family:var(--font-serif)">Blackout / Vacation Dates</h3>
+              <div class="tn-row-2">
+                <div class="tn-field">
+                  <label for="blk-day">Date to Block</label>
+                  <input id="blk-day" type="date" class="tn-input" />
+                </div>
+                <div class="tn-field">
+                  <label for="blk-reason">Reason</label>
+                  <input id="blk-reason" type="text" placeholder="Out of office" class="tn-input" />
+                </div>
+              </div>
+              <button type="button" class="tn-btn tn-btn-outline tn-btn-sm" id="btn-add-blackout">Block Date</button>
+              <div id="adm-blackout-list" style="margin-top:14px;font-size:13px"></div>
+            </div>
+          </div>
+
+          <div class="tn-panel">
+            <h3 style="margin:0 0 12px;font-family:var(--font-serif)">Active Service Menu &amp; Base Rates</h3>
+            <div class="tn-table-wrap">
+              <table class="tn-table">
+                <thead>
+                  <tr>
+                    <th>Service</th>
+                    <th>Modality</th>
+                    <th>Base Price ($)</th>
+                    <th>Status</th>
+                    <th>Update</th>
+                  </tr>
+                </thead>
+                <tbody id="adm-services-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <footer class="tn-footer">
+    <div class="tn-container tn-footer-inner">
+      <div><strong>TrustNotary Owner Cockpit</strong> · Deterministic Lume Engine</div>
+      <div><a href="/">&#8592; Back to Public Funnel</a></div>
+    </div>
+  </footer>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

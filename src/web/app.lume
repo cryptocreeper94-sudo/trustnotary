@@ -1,0 +1,1224 @@
+/// TrustNotary — Browser Funnel, Carousels, Signer Vault & Admin Cockpit (Pure Lume)
+/// DarkWave Studios LLC — Copyright 2026
+///
+/// DDA 42-Doctrine Mapping:
+///   [02] Boundary Engine      - Safe DOM node construction (zero raw innerHTML interpolation)
+///   [08] Temporal Determinism - America/Chicago date defaults & slot selection
+///   [29] Integration Layer    - Connects UI carousels, 2-step booking drawer, Signer Vault & Cockpit
+
+to setProp(obj, key, val):
+    if obj:
+        Reflect.set(obj, key, val)
+    return val
+
+to getProp(obj, key, fallback):
+    if not obj:
+        return fallback
+    let v = Reflect.get(obj, key)
+    if v == undefined or v == null:
+        return fallback
+    return v
+
+to byId(id):
+    return document.getElementById(id)
+
+to clearNode(node):
+    if not node:
+        return null
+    while node.firstChild:
+        node.removeChild(node.firstChild)
+    return node
+
+to makeEl(tag, cls, text):
+    let node = document.createElement(tag)
+    if cls and cls != "":
+        setProp(node, "className", cls)
+    if text != undefined and text != null:
+        setProp(node, "textContent", String(text))
+    return node
+
+to showEl(node, displayMode):
+    if node:
+        setProp(node.style, "display", (if displayMode then displayMode else "block"))
+
+to hideEl(node):
+    if node:
+        setProp(node.style, "display", "none")
+
+to fmtDollars(cents):
+    let n = Math.max(0, Math.round(Number(cents or 0)))
+    let whole = Math.floor(n / 100)
+    let rem = n % 100
+    if rem == 0:
+        return "$" + String(whole)
+    return "$" + String(whole) + "." + String(rem).padStart(2, "0")
+
+to todayCentralStr():
+    let fmt = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Chicago",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+    })
+    return fmt.format(new Date())
+
+to addDaysStr(dayStr, days):
+    let parts = String(dayStr).split("-")
+    let dt = new Date(Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 12, 0, 0))
+    let next = new Date(dt.getTime() + Number(days) * 86400000)
+    let y = String(next.getUTCFullYear())
+    let m = String(next.getUTCMonth() + 1).padStart(2, "0")
+    let d = String(next.getUTCDate()).padStart(2, "0")
+    return y + "-" + m + "-" + d
+
+to fmtCentralDateTime(isoStr):
+    if not isoStr:
+        return ""
+    let ms = Date.parse(String(isoStr))
+    if not Number.isFinite(ms):
+        return String(isoStr)
+    let fmt = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/Chicago",
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit"
+    })
+    return fmt.format(new Date(ms)) + " CT"
+
+to apiJson(url, method, payload):
+    let opts = {}
+    setProp(opts, "method", method or "GET")
+    setProp(opts, "credentials", "same-origin")
+    let headers = {}
+    if payload != null and payload != undefined:
+        setProp(headers, "Content-Type", "application/json")
+        setProp(opts, "body", JSON.stringify(payload))
+    setProp(opts, "headers", headers)
+    let resp = await fetch(url, opts)
+    let data = await resp.json().catch(() -> ({}))
+    return { status: resp.status, ok: resp.ok, data: data }
+
+// ---------------------------------------------------------------------------
+// 1. Mandatory Back Navigation & Secret Owner Footer Tap
+// ---------------------------------------------------------------------------
+to setupGlobalNavigation():
+    let backBtn = byId("btn-global-back")
+    if backBtn:
+        backBtn.addEventListener("click", () -> handleGlobalBack())
+
+    let secretTap = byId("owner-secret-tap")
+    if secretTap:
+        let taps = 0
+        let lastTap = 0
+        to onSecretClick():
+            let now = Date.now()
+            if now - lastTap > 2200:
+                set taps to 0
+            set taps to taps + 1
+            set lastTap to now
+            if taps >= 5:
+                setProp(window.location, "href", "/admin")
+        secretTap.addEventListener("click", () -> onSecretClick())
+
+to handleGlobalBack():
+    let path = window.location.pathname
+    let ref = String(document.referrer or "")
+    let sameOrigin = ref != "" and ref.indexOf(window.location.origin) == 0
+    if window.history.length > 1 and sameOrigin:
+        window.history.back()
+        return null
+    if path != "/" and path != "/index.html":
+        setProp(window.location, "href", "/")
+        return null
+    window.scrollTo({ top: 0, behavior: "smooth" })
+    return null
+
+// ---------------------------------------------------------------------------
+// 2. Mandatory Horizontal Scroll Carousels (Arrows + Centered Dot Indicators)
+// ---------------------------------------------------------------------------
+let CAROUSEL_CONTROLLERS = []
+
+to bindCarousel(wrap):
+    let track = wrap.querySelector(".tn-carousel-track")
+    let dotsHost = wrap.querySelector(".tn-car-dots")
+    let prevBtn = wrap.querySelector("[data-dir='-1']")
+    let nextBtn = wrap.querySelector("[data-dir='1']")
+    if not track or not dotsHost:
+        return null
+
+    to cardStepWidth():
+        let first = track.children[0]
+        if not first:
+            return 340
+        let rect = first.getBoundingClientRect()
+        return Math.max(220, Math.round(rect.width + 20))
+
+    to updateActiveDot():
+        let step = cardStepWidth()
+        let idx = Math.max(0, Math.round(track.scrollLeft / step))
+        let dots = Array.from(dotsHost.children)
+        let clamped = Math.min(idx, Math.max(0, dots.length - 1))
+        let i = 0
+        for each d in dots:
+            if i == clamped:
+                d.classList.add("active")
+            else:
+                d.classList.remove("active")
+            set i to i + 1
+
+    to scrollToSlide(slideIdx):
+        let target = track.children[slideIdx]
+        if target:
+            track.scrollTo({ left: target.offsetLeft - track.offsetLeft, behavior: "smooth" })
+
+    to rebuildDots():
+        clearNode(dotsHost)
+        let cards = Array.from(track.children)
+        let idx = 0
+        for each card in cards:
+            let myIdx = idx
+            let dot = makeEl("button", (if myIdx == 0 then "tn-car-dot active" else "tn-car-dot"), "")
+            setProp(dot, "type", "button")
+            dot.setAttribute("aria-label", "Slide " + String(myIdx + 1))
+            dot.addEventListener("click", () -> scrollToSlide(myIdx))
+            dotsHost.appendChild(dot)
+            set idx to idx + 1
+        updateActiveDot()
+
+    if prevBtn:
+        prevBtn.addEventListener("click", () -> track.scrollBy({ left: -1 * cardStepWidth(), behavior: "smooth" }))
+    if nextBtn:
+        nextBtn.addEventListener("click", () -> track.scrollBy({ left: cardStepWidth(), behavior: "smooth" }))
+    track.addEventListener("scroll", () -> updateActiveDot(), { passive: true })
+    rebuildDots()
+    return { rebuild: rebuildDots, sync: updateActiveDot }
+
+to setupAllCarousels():
+    let wraps = Array.from(document.querySelectorAll(".tn-carousel-wrap"))
+    for each w in wraps:
+        let ctrl = bindCarousel(w)
+        if ctrl:
+            CAROUSEL_CONTROLLERS.push(ctrl)
+
+to refreshAllCarousels():
+    for each c in CAROUSEL_CONTROLLERS:
+        c.rebuild()
+
+// ---------------------------------------------------------------------------
+// 3. Shared Quote Box Renderer
+// ---------------------------------------------------------------------------
+to renderQuoteInto(box, quote):
+    clearNode(box)
+    if not quote:
+        return null
+    let items = getProp(quote, "items", [])
+    for each it in items:
+        let row = makeEl("div", "tn-quote-line", "")
+        row.appendChild(makeEl("span", "", it.label))
+        row.appendChild(makeEl("span", "", fmtDollars(it.cents)))
+        box.appendChild(row)
+    let tot = makeEl("div", "tn-quote-total", "")
+    tot.appendChild(makeEl("span", "", "Upfront Total"))
+    tot.appendChild(makeEl("span", "", quote.totalDisplay or fmtDollars(quote.totalCents)))
+    box.appendChild(tot)
+    if quote.statuteNote:
+        let note = makeEl("div", "", quote.statuteNote)
+        setProp(note.style, "fontSize", "11.5px")
+        setProp(note.style, "color", "#94a3b8")
+        setProp(note.style, "marginTop", "8px")
+        box.appendChild(note)
+
+// ---------------------------------------------------------------------------
+// 4. Home Page Funnel + 2-Step Booking Drawer
+// ---------------------------------------------------------------------------
+to initHomePage():
+    let res = await apiJson("/api/public/config", "GET", null)
+    if not res.ok:
+        return null
+    let settings = getProp(res.data, "settings", {})
+    let services = getProp(res.data, "services", [])
+
+    let brandEl = byId("nav-brand-name")
+    if brandEl and settings.brandName:
+        setProp(brandEl, "textContent", settings.brandName)
+
+    let activeFilter = "all"
+    let selectedSlotIso = ""
+
+    to findService(slug):
+        for each s in services:
+            if s.slug == slug:
+                return s
+        return if services.length > 0 then services[0] else null
+
+    to populateServiceSelect(sel):
+        if not sel:
+            return null
+        clearNode(sel)
+        for each s in services:
+            let opt = makeEl("option", "", s.name + " (" + fmtDollars(s.base_price_cents) + ")")
+            setProp(opt, "value", s.slug)
+            sel.appendChild(opt)
+
+    let estSelect = byId("est-service")
+    let estSeals = byId("est-seals")
+    let estZip = byId("est-zip")
+    let estZipWrap = byId("est-zip-wrap")
+    let estOut = byId("est-quote-output")
+
+    let bkSelect = byId("bk-service")
+    let bkSeals = byId("bk-seals")
+    let bkZip = byId("bk-zip")
+    let bkZipGroup = byId("bk-zip-group")
+    let bkAddrGroup = byId("bk-address-group")
+    let bkAddr = byId("bk-address")
+    let bkQuoteBox = byId("bk-quote-box")
+    let bkDay = byId("bk-day")
+    let bkSlots = byId("bk-slots")
+
+    populateServiceSelect(estSelect)
+    populateServiceSelect(bkSelect)
+
+    to renderServiceCards():
+        let track = byId("services-track")
+        if not track:
+            return null
+        clearNode(track)
+        for each s in services:
+            if activeFilter == "all" or s.modality == activeFilter:
+                let card = makeEl("article", "tn-card", "")
+                let top = makeEl("div", "", "")
+                top.appendChild(makeEl("span", "tn-card-badge", s.badge or s.category))
+                top.appendChild(makeEl("h3", "", s.name))
+                top.appendChild(makeEl("p", "", s.description))
+                if s.paper_note:
+                    let pNote = makeEl("p", "", s.paper_note)
+                    setProp(pNote.style, "fontSize", "12px")
+                    setProp(pNote.style, "color", "#e7c558")
+                    top.appendChild(pNote)
+                card.appendChild(top)
+
+                let bottom = makeEl("div", "", "")
+                let priceRow = makeEl("div", "tn-price-row", "")
+                let unitLabel = if s.modality == "ron" then "First Notarial Seal" else "Base Service + ZIP Travel"
+                let lblSpan = makeEl("span", "", unitLabel)
+                setProp(lblSpan.style, "fontSize", "12px")
+                setProp(lblSpan.style, "color", "#cbd5e1")
+                priceRow.appendChild(lblSpan)
+                priceRow.appendChild(makeEl("span", "tn-price-big", fmtDollars(s.base_price_cents)))
+                bottom.appendChild(priceRow)
+
+                let btn = makeEl("button", "tn-btn tn-btn-gold", "Reserve Slot \u2192")
+                setProp(btn, "type", "button")
+                setProp(btn.style, "width", "100%")
+                let slugCopy = s.slug
+                btn.addEventListener("click", () -> openBookingSheet(slugCopy, 1, (if estZip then estZip.value else "37090")))
+                bottom.appendChild(btn)
+                card.appendChild(bottom)
+                track.appendChild(card)
+        refreshAllCarousels()
+
+    to updateEstimatorQuote():
+        if not estSelect:
+            return null
+        let svc = findService(estSelect.value)
+        if not svc:
+            return null
+        if svc.modality == "mobile":
+            showEl(estZipWrap, "block")
+        else:
+            hideEl(estZipWrap)
+        let qRes = await apiJson("/api/quote", "POST", {
+            serviceSlug: svc.slug,
+            sealCount: Number((estSeals and estSeals.value) or 1),
+            zip: String((estZip and estZip.value) or "37090")
+        })
+        if qRes.ok and qRes.data.quote:
+            renderQuoteInto(estOut, qRes.data.quote)
+
+    to updateSheetQuote():
+        if not bkSelect:
+            return null
+        let svc = findService(bkSelect.value)
+        if not svc:
+            return null
+        if svc.modality == "mobile":
+            showEl(bkZipGroup, "block")
+            showEl(bkAddrGroup, "block")
+        else:
+            hideEl(bkZipGroup)
+            hideEl(bkAddrGroup)
+        let qRes = await apiJson("/api/quote", "POST", {
+            serviceSlug: svc.slug,
+            sealCount: Number((bkSeals and bkSeals.value) or 1),
+            zip: String((bkZip and bkZip.value) or "37090")
+        })
+        if qRes.ok and qRes.data.quote:
+            renderQuoteInto(bkQuoteBox, qRes.data.quote)
+
+    to pickSlotBtn(btnNode, isoVal):
+        set selectedSlotIso to isoVal
+        for each other in Array.from(bkSlots.children):
+            other.classList.remove("selected")
+        btnNode.classList.add("selected")
+
+    to loadSlotsForDay(dayVal, autoAdvance):
+        if not bkSlots or not bkSelect:
+            return null
+        clearNode(bkSlots)
+        set selectedSlotIso to ""
+        bkSlots.appendChild(makeEl("span", "", "Checking Central-Time calendar..."))
+        let sRes = await apiJson("/api/availability?day=" + encodeURIComponent(dayVal) + "&service=" + encodeURIComponent(bkSelect.value), "GET", null)
+        clearNode(bkSlots)
+        let list = if sRes.ok then getProp(sRes.data, "slots", []) else []
+        if list.length == 0 and autoAdvance > 0:
+            let nextDay = addDaysStr(dayVal, 1)
+            if bkDay:
+                setProp(bkDay, "value", nextDay)
+            return await loadSlotsForDay(nextDay, autoAdvance - 1)
+        if list.length == 0:
+            bkSlots.appendChild(makeEl("span", "", "No remaining slots on this date. Please select another day."))
+            return null
+        let idx = 0
+        for each sl in list:
+            let b = makeEl("button", "tn-slot-btn", sl.label)
+            setProp(b, "type", "button")
+            let isoCopy = sl.startIso
+            if idx == 0:
+                b.classList.add("selected")
+                set selectedSlotIso to isoCopy
+            b.addEventListener("click", () -> pickSlotBtn(b, isoCopy))
+            bkSlots.appendChild(b)
+            set idx to idx + 1
+
+    to showStep(num):
+        let badge = byId("sheet-step-badge")
+        let s1 = byId("sheet-step-1")
+        let s2 = byId("sheet-step-2")
+        let sDone = byId("sheet-step-done")
+        hideEl(s1)
+        hideEl(s2)
+        hideEl(sDone)
+        if num == 1:
+            if badge:
+                setProp(badge, "textContent", "Step 1 of 2 · Service & Upfront Quote")
+            showEl(s1, "block")
+        if num == 2:
+            if badge:
+                setProp(badge, "textContent", "Step 2 of 2 · Time Slot & Signer Details")
+            showEl(s2, "block")
+        if num == 3:
+            if badge:
+                setProp(badge, "textContent", "Confirmed · Signer Vault Ready")
+            showEl(sDone, "block")
+
+    to openBookingSheet(slug, seals, zip):
+        let sheet = byId("booking-sheet")
+        if not sheet:
+            return null
+        if bkSelect and slug:
+            setProp(bkSelect, "value", slug)
+        if bkSeals and seals:
+            setProp(bkSeals, "value", String(seals))
+        if bkZip and zip:
+            setProp(bkZip, "value", String(zip))
+        showStep(1)
+        sheet.classList.add("open")
+        await updateSheetQuote()
+
+    let filterBar = byId("service-filters")
+    to activateFilterChip(chipNode):
+        set activeFilter to String(chipNode.getAttribute("data-filter") or "all")
+        for each c in Array.from(filterBar.querySelectorAll(".tn-chip")):
+            c.classList.remove("active")
+        chipNode.classList.add("active")
+        renderServiceCards()
+
+    if filterBar:
+        for each chip in Array.from(filterBar.querySelectorAll(".tn-chip")):
+            let chipRef = chip
+            chipRef.addEventListener("click", () -> activateFilterChip(chipRef))
+
+    if estSelect:
+        estSelect.addEventListener("change", () -> updateEstimatorQuote())
+    if estSeals:
+        estSeals.addEventListener("input", () -> updateEstimatorQuote())
+    if estZip:
+        estZip.addEventListener("input", () -> updateEstimatorQuote())
+
+    let estCont = byId("btn-est-continue")
+    if estCont:
+        estCont.addEventListener("click", () -> openBookingSheet((if estSelect then estSelect.value else "ron-standard"), (if estSeals then estSeals.value else 1), (if estZip then estZip.value else "37090")))
+
+    let topBook = byId("btn-hero-book-top")
+    if topBook:
+        topBook.addEventListener("click", () -> openBookingSheet("ron-standard", 1, "37090"))
+    let heroRon = byId("btn-start-ron")
+    if heroRon:
+        heroRon.addEventListener("click", () -> openBookingSheet("ron-standard", 1, "37090"))
+    let heroMob = byId("btn-start-mobile")
+    if heroMob:
+        heroMob.addEventListener("click", () -> openBookingSheet("mobile-hospital-poa", 1, "37090"))
+
+    let closeBtn = byId("btn-close-sheet")
+    if closeBtn:
+        closeBtn.addEventListener("click", () -> byId("booking-sheet").classList.remove("open"))
+
+    if bkSelect:
+        bkSelect.addEventListener("change", () -> updateSheetQuote())
+    if bkSeals:
+        bkSeals.addEventListener("input", () -> updateSheetQuote())
+    if bkZip:
+        bkZip.addEventListener("input", () -> updateSheetQuote())
+
+    to goStepTwo():
+        let today = todayCentralStr()
+        if bkDay and not bkDay.value:
+            setProp(bkDay, "value", today)
+        if bkDay:
+            setProp(bkDay, "min", today)
+        showStep(2)
+        await loadSlotsForDay((if bkDay and bkDay.value then bkDay.value else today), 3)
+
+    let toStep2 = byId("btn-to-step-2")
+    if toStep2:
+        toStep2.addEventListener("click", () -> goStepTwo())
+
+    let backStep1 = byId("btn-back-step-1")
+    if backStep1:
+        backStep1.addEventListener("click", () -> showStep(1))
+
+    if bkDay:
+        bkDay.addEventListener("change", () -> loadSlotsForDay(bkDay.value, 0))
+
+    let submitBtn = byId("btn-submit-booking")
+    if submitBtn:
+        submitBtn.addEventListener("click", () -> submitBookingForm())
+
+    to submitBookingForm():
+        let errBox = byId("bk-error")
+        hideEl(errBox)
+        let feeAgree = byId("bk-fee-agree")
+        let payload = {
+            serviceSlug: bkSelect.value,
+            sealCount: Number((bkSeals and bkSeals.value) or 1),
+            zip: String((bkZip and bkZip.value) or ""),
+            address: String((bkAddr and bkAddr.value) or ""),
+            day: String((bkDay and bkDay.value) or ""),
+            startIso: selectedSlotIso,
+            docTitle: String((byId("bk-doc-title") and byId("bk-doc-title").value) or ""),
+            clientName: String((byId("bk-name") and byId("bk-name").value) or ""),
+            clientPhone: String((byId("bk-phone") and byId("bk-phone").value) or ""),
+            clientEmail: String((byId("bk-email") and byId("bk-email").value) or ""),
+            notes: String((byId("bk-notes") and byId("bk-notes").value) or ""),
+            feeAgreed: Boolean(feeAgree and feeAgree.checked)
+        }
+        setProp(submitBtn, "disabled", true)
+        setProp(submitBtn, "textContent", "Locking Slot...")
+        let bRes = await apiJson("/api/bookings", "POST", payload)
+        setProp(submitBtn, "disabled", false)
+        setProp(submitBtn, "textContent", "Confirm Appointment \u2192")
+
+        if not bRes.ok:
+            if errBox:
+                setProp(errBox, "textContent", getProp(bRes.data, "error", "Could not complete booking"))
+                showEl(errBox, "block")
+            return null
+
+        let doneHost = byId("sheet-step-done")
+        clearNode(doneHost)
+        let bk = bRes.data.booking
+        let pin = bRes.data.vaultPin
+
+        doneHost.appendChild(makeEl("div", "tn-badge-ok", "APPOINTMENT CONFIRMED"))
+        let h = makeEl("h3", "", bk.serviceName)
+        setProp(h.style, "fontFamily", "var(--font-serif)")
+        setProp(h.style, "margin", "10px 0 4px")
+        doneHost.appendChild(h)
+        doneHost.appendChild(makeEl("p", "", fmtCentralDateTime(bk.startIso) + " · Upfront Total: " + bk.totalDisplay))
+
+        let vaultBox = makeEl("div", "tn-quote-box", "")
+        let r1 = makeEl("div", "tn-quote-line", "")
+        r1.appendChild(makeEl("span", "", "Booking Reference"))
+        r1.appendChild(makeEl("strong", "", bk.refCode))
+        vaultBox.appendChild(r1)
+
+        let r2 = makeEl("div", "tn-quote-total", "")
+        r2.appendChild(makeEl("span", "", "6-Digit Signer Vault PIN (Save This)"))
+        r2.appendChild(makeEl("span", "", String(pin)))
+        vaultBox.appendChild(r2)
+        doneHost.appendChild(vaultBox)
+
+        let btnRow = makeEl("div", "", "")
+        setProp(btnRow.style, "display", "flex")
+        setProp(btnRow.style, "gap", "10px")
+        setProp(btnRow.style, "flexWrap", "wrap")
+        setProp(btnRow.style, "marginTop", "14px")
+
+        let vaultLink = makeEl("a", "tn-btn tn-btn-gold", "Open Signer Vault & Upload PDF \u2192")
+        setProp(vaultLink, "href", "/portal?ref=" + encodeURIComponent(bk.refCode))
+        btnRow.appendChild(vaultLink)
+
+        if bk.modality == "ron" and bk.ronUrl:
+            let ronA = makeEl("a", "tn-btn tn-btn-outline", "Webcam Room Link \u2197")
+            setProp(ronA, "href", bk.ronUrl)
+            setProp(ronA, "target", "_blank")
+            btnRow.appendChild(ronA)
+
+        doneHost.appendChild(btnRow)
+        showStep(3)
+
+    renderServiceCards()
+    await updateEstimatorQuote()
+
+// ---------------------------------------------------------------------------
+// 5. Signer Vault Page (/portal)
+// ---------------------------------------------------------------------------
+to fileToBase64(fileObj):
+    to execReader(resolve, reject):
+        let reader = new FileReader()
+        to onLoaded():
+            let raw = String(reader.result or "")
+            let comma = raw.indexOf(",")
+            resolve(if comma >= 0 then raw.slice(comma + 1) else raw)
+        setProp(reader, "onload", () -> onLoaded())
+        setProp(reader, "onerror", () -> reject(new Error("Read failed")))
+        reader.readAsDataURL(fileObj)
+    return await new Promise((resolve, reject) -> execReader(resolve, reject))
+
+to initPortalPage():
+    let idInput = byId("pv-id")
+    let pinInput = byId("pv-pin")
+    let errEl = byId("pv-error")
+    let loginCard = byId("portal-login-card")
+    let contentEl = byId("portal-content")
+    let docListEl = byId("pv-doc-list")
+
+    let params = new URLSearchParams(window.location.search)
+    let preRef = params.get("ref")
+    if preRef and idInput:
+        setProp(idInput, "value", preRef)
+
+    let activeId = ""
+    let activePin = ""
+
+    to renderDocList(docs):
+        clearNode(docListEl)
+        if not docs or docs.length == 0:
+            setProp(docListEl, "textContent", "No documents uploaded yet.")
+            return null
+        for each d in docs:
+            let row = makeEl("div", "tn-quote-box", "")
+            setProp(row.style, "margin", "8px 0")
+            let kb = Math.max(1, Math.round(Number(d.size_bytes or 0) / 1024))
+            row.appendChild(makeEl("strong", "", d.filename + " (" + String(kb) + " KB)"))
+            let hashLine = makeEl("div", "", "SHA-256: " + String(d.sha256 or "").slice(0, 24) + "...")
+            setProp(hashLine.style, "fontFamily", "var(--font-mono)")
+            setProp(hashLine.style, "fontSize", "11px")
+            setProp(hashLine.style, "color", "#4ade80")
+            setProp(hashLine.style, "marginTop", "4px")
+            row.appendChild(hashLine)
+            docListEl.appendChild(row)
+
+    to unlockVault():
+        hideEl(errEl)
+        let ident = String((idInput and idInput.value) or "").trim()
+        let pin = String((pinInput and pinInput.value) or "").trim()
+        let res = await apiJson("/api/portal/lookup", "POST", { identifier: ident, pin: pin })
+        if not res.ok:
+            setProp(errEl, "textContent", getProp(res.data, "error", "Invalid credentials"))
+            showEl(errEl, "block")
+            return null
+        set activeId to ident
+        set activePin to pin
+        let bk = res.data.booking
+        let quote = res.data.quote
+        hideEl(loginCard)
+        showEl(contentEl, "block")
+        setProp(byId("pv-status-badge"), "textContent", String(bk.status or "confirmed").toUpperCase())
+        setProp(byId("pv-heading"), "textContent", bk.service_name + " (" + bk.ref_code + ")")
+        setProp(byId("pv-subheading"), "textContent", fmtCentralDateTime(bk.start_iso) + " · Signer: " + bk.client_name)
+
+        let ronBtn = byId("pv-ron-btn")
+        if bk.modality == "ron" and bk.ron_url:
+            setProp(ronBtn, "href", bk.ron_url)
+            showEl(ronBtn, "inline-flex")
+        else:
+            hideEl(ronBtn)
+
+        renderQuoteInto(byId("pv-quote-box"), quote)
+        renderDocList(res.data.documents)
+
+    to lockVaultNow():
+        set activeId to ""
+        set activePin to ""
+        if pinInput:
+            setProp(pinInput, "value", "")
+        hideEl(contentEl)
+        showEl(loginCard, "block")
+
+    let unlockBtn = byId("btn-pv-unlock")
+    if unlockBtn:
+        unlockBtn.addEventListener("click", () -> unlockVault())
+
+    let lockBtn = byId("btn-pv-lock")
+    if lockBtn:
+        lockBtn.addEventListener("click", () -> lockVaultNow())
+
+    let uploadBtn = byId("btn-pv-upload")
+    if uploadBtn:
+        uploadBtn.addEventListener("click", () -> handleVaultUpload())
+
+    to handleVaultUpload():
+        let fileIn = byId("pv-file")
+        let msgEl = byId("pv-upload-msg")
+        hideEl(msgEl)
+        if not fileIn or not fileIn.files or fileIn.files.length == 0:
+            setProp(msgEl, "textContent", "Please choose a PDF or image first.")
+            setProp(msgEl.style, "color", "#f87171")
+            showEl(msgEl, "block")
+            return null
+        let f = fileIn.files[0]
+        setProp(uploadBtn, "disabled", true)
+        setProp(uploadBtn, "textContent", "Hashing & Uploading...")
+        let b64 = await fileToBase64(f)
+        let uRes = await apiJson("/api/portal/upload", "POST", {
+            identifier: activeId,
+            pin: activePin,
+            filename: f.name,
+            mimeType: f.type or "application/pdf",
+            base64Data: b64
+        })
+        setProp(uploadBtn, "disabled", false)
+        setProp(uploadBtn, "textContent", "Upload & Compute SHA-256 Fingerprint")
+        if not uRes.ok:
+            setProp(msgEl, "textContent", getProp(uRes.data, "error", "Upload failed"))
+            setProp(msgEl.style, "color", "#f87171")
+            showEl(msgEl, "block")
+            return null
+        setProp(msgEl, "textContent", "Uploaded & fingerprinted: SHA-256 " + String(uRes.data.document.sha256).slice(0, 16) + "...")
+        setProp(msgEl.style, "color", "#4ade80")
+        showEl(msgEl, "block")
+        await unlockVault()
+
+// ---------------------------------------------------------------------------
+// 6. Commercial / B2B Partner Desk (/b2b)
+// ---------------------------------------------------------------------------
+to initB2bPage():
+    let btn = byId("btn-b2b-submit")
+    let fb = byId("b2b-feedback")
+    if not btn:
+        return null
+    btn.addEventListener("click", () -> submitB2b())
+
+    to submitB2b():
+        hideEl(fb)
+        let payload = {
+            company: String((byId("b2b-company") and byId("b2b-company").value) or ""),
+            contactName: String((byId("b2b-contact") and byId("b2b-contact").value) or ""),
+            email: String((byId("b2b-email") and byId("b2b-email").value) or ""),
+            phone: String((byId("b2b-phone") and byId("b2b-phone").value) or ""),
+            roleType: String((byId("b2b-role") and byId("b2b-role").value) or ""),
+            estMonthlyVolume: String((byId("b2b-volume") and byId("b2b-volume").value) or ""),
+            message: String((byId("b2b-message") and byId("b2b-message").value) or "")
+        }
+        let res = await apiJson("/api/b2b", "POST", payload)
+        if not res.ok:
+            setProp(fb, "textContent", getProp(res.data, "error", "Please enter company name and email"))
+            setProp(fb.style, "color", "#f87171")
+            showEl(fb, "block")
+            return null
+        setProp(fb, "textContent", "Partner request logged! We will reach out promptly with priority booking access.")
+        setProp(fb.style, "color", "#4ade80")
+        showEl(fb, "block")
+        setProp(byId("b2b-company"), "value", "")
+        setProp(byId("b2b-message"), "value", "")
+
+// ---------------------------------------------------------------------------
+// 7. Owner Admin Cockpit (/admin) + TN Digital Seal PNG & Flyer Exporters
+// ---------------------------------------------------------------------------
+to initAdminPage():
+    let loginBox = byId("admin-login-box")
+    let workspace = byId("admin-workspace")
+    let logoutBtn = byId("btn-admin-logout")
+    let cachedJournal = []
+    let cachedSettings = {}
+
+    to switchAdminTab(tabName):
+        let names = ["bookings", "journal", "seal", "settings"]
+        for each n in names:
+            let sec = byId("tab-" + n)
+            if n == tabName:
+                showEl(sec, "block")
+            else:
+                hideEl(sec)
+        let tabBar = byId("adm-tabs")
+        if tabBar:
+            for each chip in Array.from(tabBar.querySelectorAll(".tn-chip")):
+                if chip.getAttribute("data-tab") == tabName:
+                    chip.classList.add("active")
+                else:
+                    chip.classList.remove("active")
+
+    to sealSvgUrl():
+        let nm = String((byId("seal-name") and byId("seal-name").value) or cachedSettings.commissionName or "Ronald Jason Andrews")
+        let ct = String((byId("seal-county") and byId("seal-county").value) or cachedSettings.commissionCounty or "Wilson County")
+        let ex = String((byId("seal-exp") and byId("seal-exp").value) or cachedSettings.commissionExpires or "2029-12-31")
+        let ink = String((byId("seal-ink") and byId("seal-ink").value) or "#0f172a")
+        return "/api/seal.svg?name=" + encodeURIComponent(nm) + "&county=" + encodeURIComponent(ct) + "&expires=" + encodeURIComponent(ex) + "&ink=" + encodeURIComponent(ink)
+
+    to refreshSealPreview():
+        let img = byId("seal-preview-img")
+        if img:
+            setProp(img, "src", sealSvgUrl())
+
+    to drawFlyerCard():
+        let cv = byId("flyer-canvas")
+        if not cv:
+            return null
+        setProp(cv, "width", 1200)
+        setProp(cv, "height", 720)
+        let ctx = cv.getContext("2d")
+        setProp(ctx, "fillStyle", "#090e1a")
+        ctx.fillRect(0, 0, 1200, 720)
+
+        setProp(ctx, "strokeStyle", "#d4af37")
+        setProp(ctx, "lineWidth", 6)
+        ctx.strokeRect(28, 28, 1144, 664)
+
+        setProp(ctx, "fillStyle", "#d4af37")
+        setProp(ctx, "font", "700 24px monospace")
+        ctx.fillText("STATE OF TENNESSEE COMMISSIONED NOTARY PUBLIC", 72, 108)
+
+        setProp(ctx, "fillStyle", "#f8fafc")
+        setProp(ctx, "font", "700 64px Georgia, serif")
+        ctx.fillText(String(cachedSettings.brandName or "TrustNotary"), 72, 195)
+
+        setProp(ctx, "fillStyle", "#e7c558")
+        setProp(ctx, "font", "600 32px sans-serif")
+        ctx.fillText("Online Webcam Notarization ($25)  ·  Middle TN Mobile Dispatch", 72, 260)
+
+        setProp(ctx, "fillStyle", "#cbd5e1")
+        setProp(ctx, "font", "400 26px sans-serif")
+        ctx.fillText("Powers of Attorney · Trusts & Estates · Contractor Lien Waivers · Form I-9", 72, 330)
+        ctx.fillText("Base 37090 (Gladeville / Lebanon) · Wilson, Rutherford & Davidson Counties", 72, 374)
+
+        setProp(ctx, "fillStyle", "#111827")
+        ctx.fillRect(72, 440, 1056, 185)
+        setProp(ctx, "strokeStyle", "#d4af37")
+        setProp(ctx, "lineWidth", 2)
+        ctx.strokeRect(72, 440, 1056, 185)
+
+        setProp(ctx, "fillStyle", "#d4af37")
+        setProp(ctx, "font", "700 22px monospace")
+        ctx.fillText("INSTANT UPFRONT QUOTE & LIVE CENTRAL-TIME BOOKING:", 104, 492)
+
+        setProp(ctx, "fillStyle", "#ffffff")
+        setProp(ctx, "font", "700 38px monospace")
+        ctx.fillText(window.location.origin, 104, 552)
+
+        setProp(ctx, "fillStyle", "#94a3b8")
+        setProp(ctx, "font", "500 22px sans-serif")
+        ctx.fillText(String(cachedSettings.commissionName or "") + " · " + String(cachedSettings.commissionCounty or "") + " · " + String(cachedSettings.contactEmail or ""), 104, 598)
+
+    to prefillJournalFromBooking(bk):
+        setProp(byId("jrn-ref"), "value", bk.ref_code)
+        setProp(byId("jrn-modality"), "value", bk.modality)
+        setProp(byId("jrn-doc"), "value", bk.doc_title or bk.service_name)
+        setProp(byId("jrn-signer"), "value", bk.client_name)
+        setProp(byId("jrn-addr"), "value", bk.address or bk.zip)
+        setProp(byId("jrn-fee"), "value", String(Math.round(Number(bk.total_cents or 0)) / 100))
+        switchAdminTab("journal")
+
+    to renderBookingsTable(rows):
+        let tb = byId("adm-bookings-tbody")
+        clearNode(tb)
+        if not rows or rows.length == 0:
+            let tr = makeEl("tr", "", "")
+            let td = makeEl("td", "", "No appointments booked yet.")
+            td.setAttribute("colspan", "5")
+            tr.appendChild(td)
+            tb.appendChild(tr)
+            return null
+
+        for each b in rows:
+            let tr = makeEl("tr", "", "")
+            let td1 = makeEl("td", "", "")
+            td1.appendChild(makeEl("strong", "", b.ref_code))
+            td1.appendChild(makeEl("div", "", fmtCentralDateTime(b.start_iso)))
+            td1.appendChild(makeEl("span", "tn-badge-ok", b.status))
+            tr.appendChild(td1)
+
+            let td2 = makeEl("td", "", "")
+            td2.appendChild(makeEl("strong", "", b.client_name))
+            td2.appendChild(makeEl("div", "", b.client_email))
+            td2.appendChild(makeEl("div", "", b.client_phone))
+            tr.appendChild(td2)
+
+            let td3 = makeEl("td", "", "")
+            td3.appendChild(makeEl("div", "", b.service_name))
+            td3.appendChild(makeEl("strong", "", fmtDollars(b.total_cents)))
+            tr.appendChild(td3)
+
+            let td4 = makeEl("td", "", "")
+            if b.modality == "mobile":
+                td4.appendChild(makeEl("div", "", "ZIP " + b.zip + " · " + b.address))
+            else:
+                let urlIn = makeEl("input", "tn-input", "")
+                setProp(urlIn, "type", "url")
+                setProp(urlIn, "value", b.ron_url or "")
+                setProp(urlIn.style, "marginBottom", "6px")
+                let saveLinkBtn = makeEl("button", "tn-btn tn-btn-outline tn-btn-sm", "Save Room URL")
+                setProp(saveLinkBtn, "type", "button")
+                let bIdCopy = b.id
+                saveLinkBtn.addEventListener("click", () -> apiJson("/api/admin/bookings/update", "POST", { id: bIdCopy, ronUrl: urlIn.value }))
+                td4.appendChild(urlIn)
+                td4.appendChild(saveLinkBtn)
+
+            let docs = getProp(b, "documents", [])
+            for each d in docs:
+                let dLink = makeEl("a", "", "PDF: " + d.filename)
+                setProp(dLink, "href", "/api/admin/doc?bookingId=" + encodeURIComponent(b.id) + "&file=" + encodeURIComponent(d.stored_name))
+                setProp(dLink, "target", "_blank")
+                setProp(dLink.style, "display", "block")
+                setProp(dLink.style, "color", "#e7c558")
+                setProp(dLink.style, "marginTop", "4px")
+                td4.appendChild(dLink)
+            tr.appendChild(td4)
+
+            let td5 = makeEl("td", "", "")
+            let doneB = makeEl("button", "tn-btn tn-btn-gold tn-btn-sm", "Complete")
+            setProp(doneB, "type", "button")
+            setProp(doneB.style, "marginRight", "6px")
+            setProp(doneB.style, "marginBottom", "6px")
+            let bCopy = b
+            doneB.addEventListener("click", () -> updateStatusAndReload(bCopy.id, "completed"))
+            td5.appendChild(doneB)
+
+            let jrnB = makeEl("button", "tn-btn tn-btn-outline tn-btn-sm", "Log to Journal")
+            setProp(jrnB, "type", "button")
+            setProp(jrnB.style, "marginRight", "6px")
+            setProp(jrnB.style, "marginBottom", "6px")
+            jrnB.addEventListener("click", () -> prefillJournalFromBooking(bCopy))
+            td5.appendChild(jrnB)
+
+            if b.status != "cancelled":
+                let canB = makeEl("button", "tn-btn tn-btn-outline tn-btn-sm", "Cancel")
+                setProp(canB, "type", "button")
+                canB.addEventListener("click", () -> updateStatusAndReload(bCopy.id, "cancelled"))
+                td5.appendChild(canB)
+
+            tr.appendChild(td5)
+            tb.appendChild(tr)
+
+    to updateStatusAndReload(id, st):
+        await apiJson("/api/admin/bookings/update", "POST", { id: id, status: st })
+        await loadAdminOverview()
+
+    to renderJournalTable(rows, chain):
+        let tb = byId("adm-journal-tbody")
+        clearNode(tb)
+        let badge = byId("jrn-chain-badge")
+        if badge and chain:
+            let headShort = String(chain.headHash or "").slice(0, 10)
+            setProp(badge, "textContent", (if chain.intact then "SHA-256 Chain Intact · Head " + headShort else "CHAIN ALERT"))
+        if not rows or rows.length == 0:
+            let tr = makeEl("tr", "", "")
+            let td = makeEl("td", "", "No journal entries recorded yet.")
+            td.setAttribute("colspan", "5")
+            tr.appendChild(td)
+            tb.appendChild(tr)
+            return null
+        for each r in rows:
+            let tr = makeEl("tr", "", "")
+            tr.appendChild(makeEl("td", "", "#" + String(r.id) + " · " + fmtCentralDateTime(r.entry_at)))
+            tr.appendChild(makeEl("td", "", r.signer_name + " — " + r.doc_title))
+            tr.appendChild(makeEl("td", "", r.act_type + " (" + r.id_method + ")"))
+            tr.appendChild(makeEl("td", "", fmtDollars(r.fee_cents)))
+            let hashTd = makeEl("td", "", String(r.entry_hash).slice(0, 14) + "...")
+            setProp(hashTd.style, "fontFamily", "var(--font-mono)")
+            setProp(hashTd.style, "color", "#4ade80")
+            tr.appendChild(hashTd)
+            tb.appendChild(tr)
+
+    to handleSvcRowAction(svcRow, priceInput):
+        let nextCents = Math.round(Number(priceInput.value or 25) * 100)
+        let curAct = Number(svcRow.active) == 1
+        let changedPrice = nextCents != Number(svcRow.base_price_cents)
+        let nextActive = if changedPrice then curAct else (not curAct)
+        await toggleSvcAndReload(svcRow.slug, nextActive, nextCents)
+
+    to renderServicesAdmin(svcs):
+        let tb = byId("adm-services-tbody")
+        clearNode(tb)
+        for each s in svcs:
+            let tr = makeEl("tr", "", "")
+            tr.appendChild(makeEl("td", "", s.name))
+            tr.appendChild(makeEl("td", "", String(s.modality).toUpperCase()))
+            let pTd = makeEl("td", "", "")
+            let pIn = makeEl("input", "tn-input", "")
+            setProp(pIn, "type", "number")
+            setProp(pIn, "value", String(Math.round(Number(s.base_price_cents) / 100)))
+            setProp(pIn.style, "maxWidth", "110px")
+            pTd.appendChild(pIn)
+            tr.appendChild(pTd)
+
+            tr.appendChild(makeEl("td", "", (if Number(s.active) == 1 then "Active" else "Paused")))
+            let actTd = makeEl("td", "", "")
+            let saveBtn = makeEl("button", "tn-btn tn-btn-outline tn-btn-sm", (if Number(s.active) == 1 then "Save / Pause" else "Enable"))
+            setProp(saveBtn, "type", "button")
+            let svcCopy = s
+            saveBtn.addEventListener("click", () -> handleSvcRowAction(svcCopy, pIn))
+            actTd.appendChild(saveBtn)
+            tr.appendChild(actTd)
+            tb.appendChild(tr)
+
+    to toggleSvcAndReload(slug, activeFlag, priceCents):
+        await apiJson("/api/admin/services/toggle", "POST", { slug: slug, active: activeFlag, basePriceCents: priceCents })
+        await loadAdminOverview()
+
+    to renderBlackouts(list):
+        let host = byId("adm-blackout-list")
+        clearNode(host)
+        for each b in (list or []):
+            let row = makeEl("div", "tn-quote-line", "")
+            row.appendChild(makeEl("span", "", b.day + " — " + b.reason))
+            let rm = makeEl("button", "tn-back-btn", "Unblock")
+            setProp(rm, "type", "button")
+            let dayCopy = b.day
+            rm.addEventListener("click", () -> removeBlk(dayCopy))
+            row.appendChild(rm)
+            host.appendChild(row)
+
+    to removeBlk(dayStr):
+        await apiJson("/api/admin/blackouts", "POST", { action: "remove", day: dayStr })
+        await loadAdminOverview()
+
+    to renderB2bTable(rows):
+        let tb = byId("adm-b2b-tbody")
+        clearNode(tb)
+        if not rows or rows.length == 0:
+            let tr = makeEl("tr", "", "")
+            let td = makeEl("td", "", "No B2B inquiries yet.")
+            td.setAttribute("colspan", "4")
+            tr.appendChild(td)
+            tb.appendChild(tr)
+            return null
+        for each l in rows:
+            let tr = makeEl("tr", "", "")
+            tr.appendChild(makeEl("td", "", l.company))
+            tr.appendChild(makeEl("td", "", l.contact_name + " · " + l.email))
+            tr.appendChild(makeEl("td", "", l.role_type + " (" + l.est_monthly_volume + ")"))
+            tr.appendChild(makeEl("td", "", l.message))
+            tb.appendChild(tr)
+
+    to loadAdminOverview():
+        let res = await apiJson("/api/admin/overview", "GET", null)
+        if not res.ok:
+            showEl(loginBox, "block")
+            hideEl(workspace)
+            hideEl(logoutBtn)
+            return false
+        hideEl(loginBox)
+        showEl(workspace, "block")
+        showEl(logoutBtn, "inline-flex")
+
+        let d = res.data
+        set cachedJournal to d.journal or []
+        set cachedSettings to d.settings or {}
+
+        setProp(byId("kpi-bookings"), "textContent", String(d.kpis.activeBookings))
+        setProp(byId("kpi-revenue"), "textContent", fmtDollars(d.kpis.grossRevenueCents))
+        setProp(byId("kpi-journal"), "textContent", String(d.kpis.journalCount))
+        setProp(byId("kpi-b2b"), "textContent", String(d.kpis.b2bLeadsCount))
+        setProp(byId("kpi-chain-state"), "textContent", (if d.journalChain.intact then "SHA-256 Chain Verified" else "Integrity Alert"))
+
+        setProp(byId("seal-name"), "value", cachedSettings.commissionName or "")
+        setProp(byId("seal-county"), "value", cachedSettings.commissionCounty or "")
+        setProp(byId("seal-exp"), "value", cachedSettings.commissionExpires or "")
+
+        setProp(byId("set-brand"), "value", cachedSettings.brandName or "")
+        setProp(byId("set-comm-name"), "value", cachedSettings.commissionName or "")
+        setProp(byId("set-county"), "value", cachedSettings.commissionCounty or "")
+        setProp(byId("set-exp"), "value", cachedSettings.commissionExpires or "")
+        setProp(byId("set-ron-url"), "value", cachedSettings.defaultRonUrl or "")
+        setProp(byId("set-email"), "value", cachedSettings.contactEmail or "")
+        setProp(byId("set-phone"), "value", cachedSettings.contactPhone or "")
+
+        renderBookingsTable(d.bookings)
+        renderB2bTable(d.b2bLeads)
+        renderJournalTable(d.journal, d.journalChain)
+        renderServicesAdmin(d.services)
+        renderBlackouts(d.blackouts)
+        refreshSealPreview()
+        drawFlyerCard()
+        refreshAllCarousels()
+        return true
+
+    let loginBtn = byId("btn-adm-login")
+    if loginBtn:
+        loginBtn.addEventListener("click", () -> doAdminLogin())
+
+    to doAdminLogin():
+        let err = byId("adm-login-err")
+        hideEl(err)
+        let pin = String((byId("adm-pin") and byId("adm-pin").value) or "")
+        let r = await apiJson("/api/admin/login", "POST", { pin: pin })
+        if not r.ok:
+            setProp(err, "textContent", getProp(r.data, "error", "Incorrect PIN"))
+            showEl(err, "block")
+            return null
+        await loadAdminOverview()
+
+    if logoutBtn:
+        logoutBtn.addEventListener("click", () -> doLogout())
+
+    to doLogout():
+        await apiJson("/api/admin/logout", "POST", {})
+        await loadAdminOverview()
+
+    let tabBar = byId("adm-tabs")
+    if tabBar:
+        for each chip in Array.from(tabBar.querySelectorAll(".tn-chip")):
+            let chipRef = chip
+            chipRef.addEventListener("click", () -> switchAdminTab(chipRef.getAttribute("data-tab")))
+
+    let refBtn = byId("btn-adm-refresh")
+    if refBtn:
+        refBtn.addEventListener("click", () -> loadAdminOverview())
+
+    let jrnAdd = byId("btn-jrn-add")
+    if jrnAdd:
+        jrnAdd.addEventListener("click", () -> submitJournalEntry())
+
+    to submitJournalEntry():
+        let fb = byId("jrn-feedback")
+        hideEl(fb)
+        let payload = {
+            bookingRef: byId("jrn-ref").value,
+            modality: byId("jrn-modality").value,
+            actType: byId("jrn-act").value,
+            docTitle: byId("jrn-doc").value,
+            signerName: byId("jrn-signer").value,
+            signerAddress: byId("jrn-addr").value,
+            idMethod: byId("jrn-id-method").value,
+            feeCents: Math.round(Number(byId("jrn-fee").value or 0) * 100),
+            notes: byId("jrn-notes").value
+        }
+        let r = await apiJson("/api/admin/journal/add", "POST", payload)
+        if not r.ok:
+            setProp(fb, "textContent", getProp(r.data, "error", "Could not record entry"))
+            setProp(fb.style, "color", "#f87171")
+            showEl(fb, "block")
+            return null
+        setProp(fb, "textContent", "Journal Entry #" + String(r.data.entry.id) + " hashed & sealed into chain!")
+        setProp(fb.style, "color", "#4ade80")
+        showEl(fb, "block")
+        await loadAdminOverview()
+
+    to exportJournalJson():
+        let blob = new Blob([JSON.stringify(cachedJournal, null, 2)], { type: "application/json" })
+        let u = URL.createObjectURL(blob)
+        let a = makeEl("a", "", "")
+        setProp(a, "href", u)
+        setProp(a, "download", "trustnotary-tn-journal.json")
+        a.click()
+
+    let jrnExp = byId("btn-jrn-export")
+    if jrnExp:
+        jrnExp.addEventListener("click", () -> exportJournalJson())
+
+    let prevBtn = byId("btn-seal-preview")
+    if prevBtn:
+        prevBtn.addEventListener("click", () -> refreshSealPreview())
+
+    let pngBtn = byId("btn-seal-png")
+    if pngBtn:
+        pngBtn.addEventListener("click", () -> downloadSealPng())
+
+    to downloadSealPng():
+        let res = await fetch(sealSvgUrl())
+        let svgTxt = await res.text()
+        let blob = new Blob([svgTxt], { type: "image/svg+xml;charset=utf-8" })
+        let url = URL.createObjectURL(blob)
+        let img = new Image()
+        to renderPngCanvas():
+            let cv = document.createElement("canvas")
+            setProp(cv, "width", 1040)
+            setProp(cv, "height", 1040)
+            let ctx = cv.getContext("2d")
+            ctx.clearRect(0, 0, 1040, 1040)
+            ctx.drawImage(img, 0, 0, 1040, 1040)
+            URL.revokeObjectURL(url)
+            let pngUrl = cv.toDataURL("image/png")
+            let a = makeEl("a", "", "")
+            setProp(a, "href", pngUrl)
+            setProp(a, "download", "tennessee-online-notary-seal.png")
+            a.click()
+        setProp(img, "onload", () -> renderPngCanvas())
+        setProp(img, "src", url)
+
+    to exportFlyerPng():
+        drawFlyerCard()
+        let cv = byId("flyer-canvas")
+        let a = makeEl("a", "", "")
+        setProp(a, "href", cv.toDataURL("image/png"))
+        setProp(a, "download", "trustnotary-booking-card.png")
+        a.click()
+
+    let flyerBtn = byId("btn-download-flyer")
+    if flyerBtn:
+        flyerBtn.addEventListener("click", () -> exportFlyerPng())
+
+    let saveSetBtn = byId("btn-save-settings")
+    if saveSetBtn:
+        saveSetBtn.addEventListener("click", () -> saveCommSettings())
+
+    to saveCommSettings():
+        let fb = byId("set-feedback")
+        await apiJson("/api/admin/settings", "POST", {
+            brandName: byId("set-brand").value,
+            commissionName: byId("set-comm-name").value,
+            commissionCounty: byId("set-county").value,
+            commissionExpires: byId("set-exp").value,
+            defaultRonUrl: byId("set-ron-url").value,
+            contactEmail: byId("set-email").value,
+            contactPhone: byId("set-phone").value
+        })
+        setProp(fb, "textContent", "Commission & RON settings saved.")
+        setProp(fb.style, "color", "#4ade80")
+        showEl(fb, "block")
+        await loadAdminOverview()
+
+    let blkBtn = byId("btn-add-blackout")
+    if blkBtn:
+        blkBtn.addEventListener("click", () -> addBlkDate())
+
+    to addBlkDate():
+        let dVal = byId("blk-day").value
+        let rVal = byId("blk-reason").value
+        if dVal:
+            await apiJson("/api/admin/blackouts", "POST", { day: dVal, reason: rVal })
+            await loadAdminOverview()
+
+    await loadAdminOverview()
+
+// ---------------------------------------------------------------------------
+// 8. Boot Dispatcher
+// ---------------------------------------------------------------------------
+to bootTrustNotary():
+    setupGlobalNavigation()
+    setupAllCarousels()
+    let page = String((document.body and document.body.getAttribute("data-page")) or "home")
+    if page == "home":
+        await initHomePage()
+    if page == "portal":
+        await initPortalPage()
+    if page == "b2b":
+        await initB2bPage()
+    if page == "admin":
+        await initAdminPage()
+
+bootTrustNotary()

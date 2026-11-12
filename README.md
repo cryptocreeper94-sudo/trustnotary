@@ -37,3 +37,4 @@ npm start
 ```
 
 Deployed as a Dockerized Coolify container (`Dockerfile` with `/api/health` healthcheck and `/app/data` persistent volume; zero PM2).
+

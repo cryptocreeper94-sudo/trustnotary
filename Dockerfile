@@ -9,6 +9,7 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY package.json ./
+COPY vendor ./vendor
 RUN npm install --no-audit --no-fund
 
 COPY . .
@@ -25,3 +26,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD curl -fsS http://127.0.0.1:3000/api/health || exit 1
 
 CMD ["node", "dist/server.mjs"]
+

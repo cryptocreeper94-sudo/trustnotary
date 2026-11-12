@@ -43,3 +43,4 @@ export to buildSealSvg(opts):
         parts.push("<text x=\"260\" y=\"308\" text-anchor=\"middle\" fill=\"" + ink + "\" font-family=\"Arial, sans-serif\" font-size=\"13\" font-weight=\"700\" letter-spacing=\"1.5\">PUBLIC SEAL</text>")
     parts.push("</svg>")
     return parts.join("")
+

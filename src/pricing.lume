@@ -106,3 +106,4 @@ export to computeQuote(service, opts):
         totalDisplay: dollarsOf(totalCents),
         statuteNote: statuteNote
     }
+

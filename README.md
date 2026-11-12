@@ -1,5 +1,10 @@
 # TrustNotary — Tennessee Online (RON) & Middle TN Mobile Notary Platform
 
+[![CI](https://github.com/cryptocreeper94-sudo/trustnotary/actions/workflows/ci.yml/badge.svg)](https://github.com/cryptocreeper94-sudo/trustnotary/actions/workflows/ci.yml)
+[![Lume](https://img.shields.io/badge/Built%20With-Lume%20v1.1.0-8b5cf6)](https://lume-lang.com)
+[![Doctrine](https://img.shields.io/badge/42--Doctrine-Aligned-blue)](https://axiom42.com)
+[![License](https://img.shields.io/badge/License-Proprietary-red)](LICENSE)
+
 Built 100% in **Lume (`lume-lang` v1.1.0)** by **DarkWave Studios LLC** and aligned to the **42-Doctrine Deterministic Dissolution Ladder**.
 
 ## Key Capabilities

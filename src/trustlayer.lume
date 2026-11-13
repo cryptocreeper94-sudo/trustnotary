@@ -1,0 +1,72 @@
+/// TrustNotary — Fractal Trust Layer Anchor Client (chain.tlid.io)
+/// DarkWave Studios LLC — Copyright 2026
+///
+/// DDA 42-Doctrine Mapping:
+///   [02] Boundary Engine   - Zero client PII leaves the container; only SHA-256 digests are submitted
+///   [28] External Coupling - Bounded 5s timeout against https://chain.tlid.io/api/hash/submit
+///   [32] Integrity Layer   - Returns confirmed txHash, blockHeight, and public verifyUrl
+///   [35] Safety Envelope   - Graceful degradation when TRUSTLAYER_API_KEY is unset (local/CI)
+
+use { put, isoNow } from "./shim/lume-interop.mjs"
+
+export let VERIFY_PAGE_URL = "https://trustlayer.tlid.io/verify.html"
+
+to rpcBaseUrl():
+    let raw = String(process.env.TRUSTLAYER_RPC_URL or process.env.TRUSTLAYER_BASE_URL or "https://chain.tlid.io").trim()
+    return raw.replace(new RegExp("/+$"), "")
+
+to apiKeyVal():
+    return String(process.env.TRUSTLAYER_API_KEY or "").trim()
+
+export to trustLayerConfigured():
+    return apiKeyVal().length > 8
+
+export to verifyUrlFor(txHash):
+    let clean = String(txHash or "").trim()
+    if clean == "":
+        return VERIFY_PAGE_URL
+    return VERIFY_PAGE_URL + "?tx=" + encodeURIComponent(clean)
+
+export to anchorToTrustLayer(dataHash, category, safeMeta):
+    let key = apiKeyVal()
+    let cleanHash = String(dataHash or "").trim().toLowerCase()
+    if cleanHash == "":
+        return { anchored: false, reason: "empty_hash" }
+    if key.length <= 8:
+        return { anchored: false, reason: "unconfigured" }
+
+    let headers = {}
+    put(headers, "Content-Type", "application/json")
+    put(headers, "X-API-Key", key)
+
+    let payload = {
+        dataHash: cleanHash,
+        category: String(category or "tn-notary-journal"),
+        appId: "trustnotary",
+        metadata: safeMeta or {}
+    }
+
+    try:
+        let resp = await fetch(rpcBaseUrl() + "/api/hash/submit", {
+            method: "POST",
+            headers: headers,
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(5000)
+        })
+        if not resp.ok:
+            return { anchored: false, reason: "http_" + String(resp.status) }
+        let data = await resp.json()
+        let txHash = String(data.txHash or "")
+        if txHash == "":
+            return { anchored: false, reason: "missing_tx_hash" }
+        let blk = String(data.blockHeight or "")
+        let ts = String(data.timestamp or isoNow())
+        return {
+            anchored: true,
+            txHash: txHash,
+            blockHeight: blk,
+            anchoredAt: ts,
+            verifyUrl: verifyUrlFor(txHash)
+        }
+    with err:
+        return { anchored: false, reason: String(err.message or err) }

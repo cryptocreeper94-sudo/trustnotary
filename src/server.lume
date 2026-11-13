@@ -16,6 +16,7 @@ use { computeQuote, lookupZipZone } from "./pricing.lume"
 use { computeAvailableSlots, isValidDay } from "./scheduler.lume"
 use { buildSealSvg } from "./seal.lume"
 use { notifyBookingCreated, createStripeCheckoutForBooking, resendConfigured, stripeConfigured } from "./notifications.lume"
+use { anchorToTrustLayer, trustLayerConfigured, verifyUrlFor, VERIFY_PAGE_URL } from "./trustlayer.lume"
 
 let HERE = dirname(fileURLToPath(import.meta.url))
 let ROOT_DIR = join(HERE, "..")
@@ -115,8 +116,34 @@ export to handleRequest(req, res):
             tz: APP_TZ,
             journalIntact: chain.intact,
             journalEntries: chain.count,
+            trustLayerConfigured: trustLayerConfigured(),
             emailConfigured: resendConfigured(),
             stripeConfigured: stripeConfigured()
+        })
+
+    // 1b. Public Fractal Trust Layer anchors feed (zero PII — digests + txHashes only)
+    if path == "/api/anchors" and method == "GET":
+        let chain = store.verifyJournalChain()
+        let rawAnchors = store.recentAnchors(25)
+        let enriched = []
+        for each a in rawAnchors:
+            enriched.push({
+                id: a.id,
+                kind: a.kind,
+                dataHash: a.data_hash,
+                txHash: a.tx_hash,
+                blockHeight: a.block_height,
+                anchoredAt: a.anchored_at,
+                verifyUrl: verifyUrlFor(a.tx_hash)
+            })
+        return jsonReply(res, 200, {
+            scheme: "fractal-trust-layer-v1",
+            appId: "trustnotary",
+            configured: trustLayerConfigured(),
+            journalIntact: chain.intact,
+            journalEntries: chain.count,
+            verifyPage: VERIFY_PAGE_URL,
+            anchors: enriched
         })
 
     // 2. Public configuration & active service catalog
@@ -293,7 +320,10 @@ export to handleRequest(req, res):
         writeFileSync(join(bkDir, storedName), buf)
         let digest = sha256Hex(buf)
         let docRec = store.addDocument(found.booking.id, cleanName, storedName, String(body.mimeType or "application/pdf"), buf.length, digest)
-        return jsonReply(res, 201, { ok: true, document: docRec })
+        let tlAnchor = await anchorToTrustLayer(digest, "notary-document-vault", { sizeBytes: buf.length })
+        if tlAnchor.anchored:
+            set docRec to store.saveDocumentAnchor(docRec.id, tlAnchor.txHash, tlAnchor.blockHeight, tlAnchor.anchoredAt)
+        return jsonReply(res, 201, { ok: true, document: docRec, trustLayer: tlAnchor })
 
     // 8. Tennessee Digital Notary Seal SVG (public preview + admin studio)
     if path == "/api/seal.svg" and method == "GET":
@@ -377,7 +407,10 @@ export to handleRequest(req, res):
             if String(body.signerName or "").trim() == "" or String(body.docTitle or "").trim() == "":
                 return jsonReply(res, 400, { error: "Signer name and document title are required for journal compliance" })
             let entry = store.addJournalEntry(body)
-            return jsonReply(res, 201, { ok: true, entry: entry, chain: store.verifyJournalChain() })
+            let tlAnchor = await anchorToTrustLayer(entry.entry_hash, "tn-notary-journal", { modality: entry.modality, actType: entry.act_type })
+            if tlAnchor.anchored:
+                set entry to store.saveJournalAnchor(entry.id, tlAnchor.txHash, tlAnchor.blockHeight, tlAnchor.anchoredAt)
+            return jsonReply(res, 201, { ok: true, entry: entry, chain: store.verifyJournalChain(), trustLayer: tlAnchor })
 
         if path == "/api/admin/blackouts" and method == "POST":
             let raw = await readReqBody(req, 8192)
@@ -423,7 +456,24 @@ export to handleRequest(req, res):
 
     return jsonReply(res, 404, { error: "Not found" })
 
+to anchorJournalHeadCheckpoint():
+    if not trustLayerConfigured():
+        return null
+    let chain = store.verifyJournalChain()
+    if not chain.intact:
+        return null
+    let checkpointDigest = sha256Hex("trustnotary-journal-head:" + String(chain.headHash) + ":" + String(chain.count))
+    let existing = store.recentAnchors(5)
+    for each ex in existing:
+        if ex.data_hash == checkpointDigest:
+            return null
+    let anchored = await anchorToTrustLayer(checkpointDigest, "tn-journal-checkpoint", { entries: chain.count, intact: true })
+    if anchored.anchored:
+        store.saveCheckpointAnchor("tn-journal-checkpoint", checkpointDigest, anchored.txHash, anchored.blockHeight, anchored.anchoredAt)
+        console.log("[TrustNotary] Anchored journal head to Trust Layer block #" + String(anchored.blockHeight) + " (" + String(anchored.txHash) + ")")
+
 let IS_MAIN = String(process.argv[1] or "").replace(new RegExp("\\\\", "g"), "/").endsWith("/server.mjs")
 if IS_MAIN:
     let srv = createServer((req, res) -> handleRequest(req, res))
     srv.listen(PORT, "0.0.0.0", () -> console.log("[TrustNotary] Lume server listening on :" + String(PORT) + " (" + APP_TZ + ")"))
+    anchorJournalHeadCheckpoint()

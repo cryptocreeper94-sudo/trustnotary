@@ -23,12 +23,29 @@ let SCHEMA_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_docs_booking ON documents(booking_id);",
     "CREATE TABLE IF NOT EXISTS journal_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, entry_at TEXT NOT NULL, booking_ref TEXT NOT NULL DEFAULT '', modality TEXT NOT NULL, act_type TEXT NOT NULL, doc_title TEXT NOT NULL, signer_name TEXT NOT NULL, signer_address TEXT NOT NULL DEFAULT '', id_method TEXT NOT NULL, id_hint TEXT NOT NULL DEFAULT '', fee_cents INTEGER NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '', prev_hash TEXT NOT NULL, entry_hash TEXT NOT NULL);",
     "CREATE TABLE IF NOT EXISTS blackout_dates (day TEXT PRIMARY KEY, reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);",
-    "CREATE TABLE IF NOT EXISTS b2b_leads (id INTEGER PRIMARY KEY AUTOINCREMENT, company TEXT NOT NULL, contact_name TEXT NOT NULL, email TEXT NOT NULL, phone TEXT NOT NULL DEFAULT '', role_type TEXT NOT NULL DEFAULT '', est_monthly_volume TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'new', created_at TEXT NOT NULL);"
+    "CREATE TABLE IF NOT EXISTS b2b_leads (id INTEGER PRIMARY KEY AUTOINCREMENT, company TEXT NOT NULL, contact_name TEXT NOT NULL, email TEXT NOT NULL, phone TEXT NOT NULL DEFAULT '', role_type TEXT NOT NULL DEFAULT '', est_monthly_volume TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'new', created_at TEXT NOT NULL);",
+    "CREATE TABLE IF NOT EXISTS chain_anchors (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, data_hash TEXT NOT NULL, tx_hash TEXT NOT NULL, block_height TEXT NOT NULL, anchored_at TEXT NOT NULL);"
 ].join("\n")
 
 export to createStore(dbFile, secret):
     let db = openSqlite(dbFile)
     db.exec(SCHEMA_SQL)
+
+    to ensureColumn(tableName, colName, colDef):
+        let cols = db.all("PRAGMA table_info(" + tableName + ")", [])
+        let found = false
+        for each c in cols:
+            if c.name == colName:
+                set found to true
+        if not found:
+            db.exec("ALTER TABLE " + tableName + " ADD COLUMN " + colName + " " + colDef)
+
+    ensureColumn("documents", "tl_tx_hash", "TEXT NOT NULL DEFAULT ''")
+    ensureColumn("documents", "tl_block_height", "TEXT NOT NULL DEFAULT ''")
+    ensureColumn("documents", "tl_anchored_at", "TEXT NOT NULL DEFAULT ''")
+    ensureColumn("journal_entries", "tl_tx_hash", "TEXT NOT NULL DEFAULT ''")
+    ensureColumn("journal_entries", "tl_block_height", "TEXT NOT NULL DEFAULT ''")
+    ensureColumn("journal_entries", "tl_anchored_at", "TEXT NOT NULL DEFAULT ''")
 
     // Seed default settings without overwriting customized values
     for each k in Object.keys(DEFAULT_SETTINGS):
@@ -134,7 +151,7 @@ export to createStore(dbFile, secret):
         )
         for each r in rows:
             if safeEq(r.vault_pin_hash, candidateHash):
-                let docs = db.all("SELECT id, filename, mime_type, size_bytes, sha256, created_at FROM documents WHERE booking_id = ? ORDER BY created_at DESC", [r.id])
+                let docs = db.all("SELECT id, filename, mime_type, size_bytes, sha256, tl_tx_hash, tl_block_height, tl_anchored_at, created_at FROM documents WHERE booking_id = ? ORDER BY created_at DESC", [r.id])
                 return { booking: r, quote: tryJson(r.quote_json, {}), documents: docs }
         return null
 
@@ -144,13 +161,13 @@ export to createStore(dbFile, secret):
             "INSERT INTO documents (id, booking_id, filename, stored_name, mime_type, size_bytes, sha256, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             [docId, bookingId, filename, storedName, mimeType, sizeBytes, sha256, isoNow()]
         )
-        return db.get("SELECT id, filename, mime_type, size_bytes, sha256, created_at FROM documents WHERE id = ?", [docId])
+        return db.get("SELECT id, filename, mime_type, size_bytes, sha256, tl_tx_hash, tl_block_height, tl_anchored_at, created_at FROM documents WHERE id = ?", [docId])
 
     to listBookingsAdmin():
         let rows = db.all("SELECT * FROM bookings ORDER BY start_iso DESC LIMIT 200", [])
         let out = []
         for each r in rows:
-            let docs = db.all("SELECT id, filename, stored_name, size_bytes, sha256, created_at FROM documents WHERE booking_id = ? ORDER BY created_at DESC", [r.id])
+            let docs = db.all("SELECT id, filename, stored_name, size_bytes, sha256, tl_tx_hash, tl_block_height, tl_anchored_at, created_at FROM documents WHERE booking_id = ? ORDER BY created_at DESC", [r.id])
             out.push({ ...r, quote: tryJson(r.quote_json, {}), documents: docs })
         return out
 
@@ -231,6 +248,30 @@ export to createStore(dbFile, secret):
     to listB2bLeads():
         return db.all("SELECT * FROM b2b_leads ORDER BY id DESC LIMIT 100", [])
 
+    to saveDocumentAnchor(docId, txHash, blockHeight, anchoredAt):
+        let ts = String(anchoredAt or isoNow())
+        db.run("UPDATE documents SET tl_tx_hash = ?, tl_block_height = ?, tl_anchored_at = ? WHERE id = ?", [String(txHash or ""), String(blockHeight or ""), ts, String(docId)])
+        let row = db.get("SELECT id, filename, mime_type, size_bytes, sha256, tl_tx_hash, tl_block_height, tl_anchored_at, created_at FROM documents WHERE id = ?", [String(docId)])
+        if row and row.tl_tx_hash != "":
+            db.run("INSERT INTO chain_anchors (kind, data_hash, tx_hash, block_height, anchored_at) VALUES (?, ?, ?, ?, ?)", ["notary-document-vault", row.sha256, row.tl_tx_hash, row.tl_block_height, ts])
+        return row
+
+    to saveJournalAnchor(entryId, txHash, blockHeight, anchoredAt):
+        let ts = String(anchoredAt or isoNow())
+        db.run("UPDATE journal_entries SET tl_tx_hash = ?, tl_block_height = ?, tl_anchored_at = ? WHERE id = ?", [String(txHash or ""), String(blockHeight or ""), ts, Number(entryId)])
+        let row = db.get("SELECT * FROM journal_entries WHERE id = ?", [Number(entryId)])
+        if row and row.tl_tx_hash != "":
+            db.run("INSERT INTO chain_anchors (kind, data_hash, tx_hash, block_height, anchored_at) VALUES (?, ?, ?, ?, ?)", ["tn-notary-journal", row.entry_hash, row.tl_tx_hash, row.tl_block_height, ts])
+        return row
+
+    to saveCheckpointAnchor(kind, dataHash, txHash, blockHeight, anchoredAt):
+        let ts = String(anchoredAt or isoNow())
+        db.run("INSERT INTO chain_anchors (kind, data_hash, tx_hash, block_height, anchored_at) VALUES (?, ?, ?, ?, ?)", [String(kind), String(dataHash), String(txHash), String(blockHeight or ""), ts])
+
+    to recentAnchors(limitCount):
+        let lim = Math.min(Math.max(Number(limitCount or 25), 1), 100)
+        return db.all("SELECT * FROM chain_anchors ORDER BY id DESC LIMIT ?", [lim])
+
     return {
         getSettings: getSettings,
         saveSettings: saveSettings,
@@ -244,11 +285,15 @@ export to createStore(dbFile, secret):
         createBookingAtomic: createBookingAtomic,
         verifyPortalAccess: verifyPortalAccess,
         addDocument: addDocument,
+        saveDocumentAnchor: saveDocumentAnchor,
         listBookingsAdmin: listBookingsAdmin,
         getBookingById: getBookingById,
         setStripeSession: setStripeSession,
         updateBookingAdmin: updateBookingAdmin,
         addJournalEntry: addJournalEntry,
+        saveJournalAnchor: saveJournalAnchor,
+        saveCheckpointAnchor: saveCheckpointAnchor,
+        recentAnchors: recentAnchors,
         listJournal: listJournal,
         verifyJournalChain: verifyJournalChain,
         addB2bLead: addB2bLead,

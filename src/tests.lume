@@ -8,6 +8,7 @@ use { computeQuote, lookupZipZone } from "./pricing.lume"
 use { computeAvailableSlots } from "./scheduler.lume"
 use { createStore } from "./store.lume"
 use { buildSealSvg } from "./seal.lume"
+use { verifyUrlFor, trustLayerConfigured } from "./trustlayer.lume"
 use { tzSlotToEpoch, isoOf } from "./shim/lume-interop.mjs"
 
 to j(v):
@@ -74,7 +75,7 @@ to runStoreAndSealCheck():
     })
 
     let portalOk = st.verifyPortalAccess(b1.booking.ref_code, b1.vaultPin)
-    st.addJournalEntry({
+    let jEntry = st.addJournalEntry({
         bookingRef: b1.booking.ref_code,
         modality: "ron",
         actType: "Acknowledgment",
@@ -83,11 +84,15 @@ to runStoreAndSealCheck():
         idMethod: "TN Driver License + KBA",
         feeCents: 2500
     })
+    st.saveJournalAnchor(jEntry.id, "0xabc123", "4200", "2026-11-19T12:00:00Z")
+    let anchors = st.recentAnchors(10)
+    let vUrl = verifyUrlFor("0xabc123")
+    let _cfg = Boolean(trustLayerConfigured())
     let chain = st.verifyJournalChain()
     let svg = buildSealSvg({ name: "RONALD JASON ANDREWS", county: "WILSON COUNTY" })
     st.close()
     rmSync(dir, { recursive: true, force: true })
-    return j([b1.ok, b2.conflict, portalOk.booking.client_name, chain.intact, chain.count, svg.includes("WILSON COUNTY")])
+    return j([b1.ok, b2.conflict, portalOk.booking.client_name, chain.intact, chain.count, svg.includes("WILSON COUNTY"), anchors.length, vUrl.includes("verify.html?tx=0xabc123")])
 
 test "Pricing enforces $25 TN online cap and calculates Mt. Juliet ZIP travel":
     expect runPricingCheck() to equal j([2500, 3500, "Mt. Juliet", 8000])
@@ -95,5 +100,5 @@ test "Pricing enforces $25 TN online cap and calculates Mt. Juliet ZIP travel":
 test "Scheduler computes Central slots and enforces buffers + blackout dates":
     expect runSchedulerCheck() to equal j([true, true, 0])
 
-test "SQLite store blocks double-bookings atomically and verifies SHA-256 Notary Journal + TN Seal SVG":
-    expect runStoreAndSealCheck() to equal j([true, true, "Jane Signer", true, 1, true])
+test "SQLite store blocks double-bookings atomically and verifies SHA-256 Notary Journal + TN Seal SVG + Trust Layer anchors":
+    expect runStoreAndSealCheck() to equal j([true, true, "Jane Signer", true, 1, true, 1, true])
